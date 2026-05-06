@@ -312,9 +312,9 @@ type RBACResult struct {
 // RemediationOption represents a single remediation approach produced by
 // the analysis agent. The agent may return multiple options, each with
 // its own diagnosis, remediation plan, verification strategy, and RBAC
-// requirements. The user selects one option after analysis
-// (recorded in AnalysisStepStatus.selectedOption), and the operator uses
-// that option's RBAC and plan for the execution step.
+// requirements. When the user approves execution, the operator trims
+// the AnalysisResult to keep only the approved option and uses its
+// RBAC and plan for the execution step.
 //
 // The components field is an extensibility point for adapter-specific UI
 // data. For example, an ACS adapter might include violation details or

@@ -101,9 +101,6 @@ func (o *GetOptions) printDetail(p *agenticv1alpha1.Proposal) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Analysis:          %s\n",
 		stepStatusFromConditions(p.Status.Steps.Analysis.Conditions, agenticv1alpha1.ProposalConditionAnalyzed))
-	if p.Status.Steps.Analysis.SelectedOption != nil {
-		fmt.Fprintf(w, "  Selected Option: %d\n", *p.Status.Steps.Analysis.SelectedOption)
-	}
 	for _, ref := range p.Status.Steps.Analysis.Results {
 		fmt.Fprintf(w, "  Result:          %s (outcome=%s)\n", ref.Name, ref.Outcome)
 	}

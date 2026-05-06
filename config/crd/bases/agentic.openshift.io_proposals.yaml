@@ -1866,13 +1866,6 @@ spec:
                         - claimName
                         - namespace
                         type: object
-                      selectedOption:
-                        description: |-
-                          selectedOption is the 0-based index into the options array
-                          of the latest AnalysisResult CR that the user approved.
-                        format: int32
-                        minimum: 0
-                        type: integer
                     type: object
                   escalation:
                     description: escalation is the observed state of the escalation

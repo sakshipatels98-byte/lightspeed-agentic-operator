@@ -187,11 +187,6 @@ type AnalysisStepStatus struct {
 	// sandbox tracks the sandbox used.
 	// +optional
 	Sandbox SandboxInfo `json:"sandbox,omitzero"`
-	// selectedOption is the 0-based index into the options array
-	// of the latest AnalysisResult CR that the user approved.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	SelectedOption *int32 `json:"selectedOption,omitempty"`
 	// results references AnalysisResult CRs, newest last.
 	// Each entry corresponds to one analysis attempt.
 	// +optional

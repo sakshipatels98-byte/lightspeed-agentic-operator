@@ -583,7 +583,7 @@ func TestReconcile_RevisionNoOp_WhenObserved(t *testing.T) {
 	}
 }
 
-func TestReconcile_RevisionResetsSelectedOption(t *testing.T) {
+func TestReconcile_RevisionReanalysis(t *testing.T) {
 	scheme := testScheme()
 	proposal := testProposal()
 
@@ -596,25 +596,11 @@ func TestReconcile_RevisionResetsSelectedOption(t *testing.T) {
 	// Analysis → Executing
 	reconcileOnce(r, "fix-crash")
 
-	// Set selectedOption (user started reviewing)
-	p, _ := getProposal(r, "fix-crash")
-	base := p.DeepCopy()
-	selected := int32(0)
-	p.Status.Steps.Analysis.SelectedOption = &selected
-	if err := fc.Status().Patch(context.Background(), p, client.MergeFrom(base)); err != nil {
-		t.Fatalf("set selectedOption: %v", err)
-	}
-
 	// Submit revision
 	reviseProposal(t, fc, "fix-crash", "revise analysis")
 
 	// Reconcile revision
 	reconcileOnce(r, "fix-crash")
-
-	p, _ = getProposal(r, "fix-crash")
-	if p.Status.Steps.Analysis.SelectedOption != nil {
-		t.Fatal("selectedOption should be cleared after revision")
-	}
 }
 
 func TestReconcile_RevisionAnalysisFailure(t *testing.T) {
@@ -1155,12 +1141,18 @@ func TestReconcile_ExecutionSelectsOption(t *testing.T) {
 	// Approve option 1 (Option B)
 	approveProposalWithOption(t, fc, "fix-crash", 1)
 
-	// Execution reconcile — selectedOption is persisted
+	// Execution reconcile — should trim to just Option B
 	reconcileOnce(r, "fix-crash")
 
 	p, _ = getProposal(r, "fix-crash")
-	if p.Status.Steps.Analysis.SelectedOption == nil || *p.Status.Steps.Analysis.SelectedOption != 1 {
-		t.Errorf("expected SelectedOption=1, got %v", p.Status.Steps.Analysis.SelectedOption)
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: p.Status.Steps.Analysis.Results[0].Name, Namespace: "default"}, &ar); err != nil {
+		t.Fatalf("get AnalysisResult after trim: %v", err)
+	}
+	if len(ar.Status.Options) != 1 {
+		t.Fatalf("expected 1 option after trim, got %d", len(ar.Status.Options))
+	}
+	if ar.Status.Options[0].Title != "Option B" {
+		t.Errorf("expected trimmed option %q, got %q", "Option B", ar.Status.Options[0].Title)
 	}
 }
 
@@ -1187,12 +1179,9 @@ func TestReconcile_ExecutionSingleOption(t *testing.T) {
 	if len(p.Status.Steps.Analysis.Results) == 0 {
 		t.Fatal("expected analysis results")
 	}
-	if p.Status.Steps.Analysis.SelectedOption == nil || *p.Status.Steps.Analysis.SelectedOption != 0 {
-		t.Errorf("expected SelectedOption=0, got %v", p.Status.Steps.Analysis.SelectedOption)
-	}
 }
 
-func TestReconcile_RetryPreservesSelectedOption(t *testing.T) {
+func TestReconcile_TrimOptionsOnExecution(t *testing.T) {
 	scheme := testScheme()
 	proposal := testProposal()
 
@@ -1222,40 +1211,40 @@ func TestReconcile_RetryPreservesSelectedOption(t *testing.T) {
 	// Approve option 2 (Option C)
 	approveProposalWithOption(t, fc, "fix-crash", 2)
 
-	// Execution
-	reconcileOnce(r, "fix-crash")
-
-	// Verification fails → triggers retry
+	// Execution — should trim options to just Option C
 	reconcileOnce(r, "fix-crash")
 
 	p, _ := getProposal(r, "fix-crash")
-	if agenticv1alpha1.DerivePhase(p.Status.Conditions) != agenticv1alpha1.ProposalPhaseExecuting {
-		t.Fatalf("expected Executing (retry), got %s", agenticv1alpha1.DerivePhase(p.Status.Conditions))
-	}
 
-	// Verify selected option survived the retry reset
-	if p.Status.Steps.Analysis.SelectedOption == nil || *p.Status.Steps.Analysis.SelectedOption != 2 {
-		t.Errorf("expected SelectedOption=2 after retry, got %v", p.Status.Steps.Analysis.SelectedOption)
-	}
-
-	// Verify AnalysisResult CR still has all 3 options
+	// Verify AnalysisResult was trimmed to 1 option
 	var ar agenticv1alpha1.AnalysisResult
 	if err := fc.Get(context.Background(), types.NamespacedName{Name: p.Status.Steps.Analysis.Results[0].Name, Namespace: "default"}, &ar); err != nil {
 		t.Fatalf("get AnalysisResult: %v", err)
 	}
-	if len(ar.Status.Options) != 3 {
-		t.Fatalf("expected 3 options in AnalysisResult after retry, got %d", len(ar.Status.Options))
+	if len(ar.Status.Options) != 1 {
+		t.Fatalf("expected 1 option in AnalysisResult after trim, got %d", len(ar.Status.Options))
 	}
-	if ar.Status.Options[2].Title != "Option C" {
-		t.Errorf("expected option[2] title %q, got %q", "Option C", ar.Status.Options[2].Title)
+	if ar.Status.Options[0].Title != "Option C" {
+		t.Errorf("expected trimmed option title %q, got %q", "Option C", ar.Status.Options[0].Title)
 	}
 
-	// Re-execute after retry — selectedOption() should still resolve
+	// Verification fails → triggers retry
 	reconcileOnce(r, "fix-crash")
 
 	p, _ = getProposal(r, "fix-crash")
-	if p.Status.Steps.Analysis.SelectedOption == nil || *p.Status.Steps.Analysis.SelectedOption != 2 {
-		t.Errorf("expected SelectedOption=2 after re-execution, got %v", p.Status.Steps.Analysis.SelectedOption)
+	if agenticv1alpha1.DerivePhase(p.Status.Conditions) != agenticv1alpha1.ProposalPhaseExecuting {
+		t.Fatalf("expected Executing (retry), got %s", agenticv1alpha1.DerivePhase(p.Status.Conditions))
+	}
+
+	// AnalysisResult should still have just 1 option after retry
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: p.Status.Steps.Analysis.Results[0].Name, Namespace: "default"}, &ar); err != nil {
+		t.Fatalf("get AnalysisResult after retry: %v", err)
+	}
+	if len(ar.Status.Options) != 1 {
+		t.Fatalf("expected 1 option after retry, got %d", len(ar.Status.Options))
+	}
+	if ar.Status.Options[0].Title != "Option C" {
+		t.Errorf("expected option %q after retry, got %q", "Option C", ar.Status.Options[0].Title)
 	}
 }
 

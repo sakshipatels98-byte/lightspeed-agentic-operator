@@ -12,25 +12,21 @@ import (
 
 func ptr32(v int32) *int32 { return &v }
 
-func TestSelectedOption_FromAnalysisResult(t *testing.T) {
+func TestSelectedOption_ReturnsFirstOption(t *testing.T) {
 	scheme := testScheme()
 
 	proposal := &agenticv1alpha1.Proposal{}
 	proposal.Name = "test"
 	proposal.Namespace = "default"
-	proposal.Status.Steps.Analysis.SelectedOption = ptr32(2)
 	proposal.Status.Steps.Analysis.Results = []agenticv1alpha1.StepResultRef{
 		{Name: "test-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded},
 	}
 
-	// Create an AnalysisResult CR with the options
 	analysisResult := &agenticv1alpha1.AnalysisResult{}
 	analysisResult.Name = "test-analysis-1"
 	analysisResult.Namespace = "default"
 	analysisResult.Status.Options = []agenticv1alpha1.RemediationOption{
 		{Title: "A"},
-		{Title: "B"},
-		{Title: "C"},
 	}
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).Build()
@@ -43,18 +39,17 @@ func TestSelectedOption_FromAnalysisResult(t *testing.T) {
 	if got == nil {
 		t.Fatal("selectedOption() returned nil")
 	}
-	if got.Title != "C" {
-		t.Errorf("selectedOption().Title = %q, want %q", got.Title, "C")
+	if got.Title != "A" {
+		t.Errorf("selectedOption().Title = %q, want %q", got.Title, "A")
 	}
 }
 
-func TestSelectedOption_NilSelected(t *testing.T) {
+func TestSelectedOption_NoResults(t *testing.T) {
 	scheme := testScheme()
 
 	proposal := &agenticv1alpha1.Proposal{}
 	proposal.Name = "test"
 	proposal.Namespace = "default"
-	// SelectedOption is nil
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
@@ -64,7 +59,97 @@ func TestSelectedOption_NilSelected(t *testing.T) {
 		t.Fatalf("selectedOption() error: %v", err)
 	}
 	if got != nil {
-		t.Errorf("selectedOption() should return nil when SelectedOption is nil, got %+v", got)
+		t.Errorf("selectedOption() should return nil when no results, got %+v", got)
+	}
+}
+
+func TestTrimNonSelectedOptions_SingleOptionNoop(t *testing.T) {
+	scheme := testScheme()
+	analysisResult := &agenticv1alpha1.AnalysisResult{}
+	analysisResult.Name = "test-analysis-1"
+	analysisResult.Namespace = "default"
+	analysisResult.Status.Options = []agenticv1alpha1.RemediationOption{
+		{Title: "Only"},
+	}
+
+	proposal := &agenticv1alpha1.Proposal{}
+	proposal.Name = "test"
+	proposal.Namespace = "default"
+	proposal.Status.Steps.Analysis.Results = []agenticv1alpha1.StepResultRef{
+		{Name: "test-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded},
+	}
+
+	approval := &agenticv1alpha1.ProposalApproval{
+		Spec: agenticv1alpha1.ProposalApprovalSpec{
+			Stages: []agenticv1alpha1.ApprovalStage{
+				{Type: agenticv1alpha1.ApprovalStageExecution, Execution: agenticv1alpha1.ExecutionApproval{Option: ptr32(0)}},
+			},
+		},
+	}
+
+	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).WithStatusSubresource(analysisResult).Build()
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+
+	got, err := r.trimNonSelectedOptions(context.Background(), proposal, approval, nil)
+	if err != nil {
+		t.Fatalf("trimNonSelectedOptions() error: %v", err)
+	}
+	if got == nil || got.Title != "Only" {
+		t.Errorf("single option should be returned unchanged")
+	}
+}
+
+func TestTrimThenSelectedOption_EndToEnd(t *testing.T) {
+	scheme := testScheme()
+
+	tests := []struct {
+		name      string
+		options   []agenticv1alpha1.RemediationOption
+		selectIdx int32
+		wantTitle string
+	}{
+		{"select first of 3", []agenticv1alpha1.RemediationOption{{Title: "A"}, {Title: "B"}, {Title: "C"}}, 0, "A"},
+		{"select middle of 3", []agenticv1alpha1.RemediationOption{{Title: "A"}, {Title: "B"}, {Title: "C"}}, 1, "B"},
+		{"select last of 3", []agenticv1alpha1.RemediationOption{{Title: "A"}, {Title: "B"}, {Title: "C"}}, 2, "C"},
+		{"select second of 2", []agenticv1alpha1.RemediationOption{{Title: "X"}, {Title: "Y"}}, 1, "Y"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			analysisResult := &agenticv1alpha1.AnalysisResult{}
+			analysisResult.Name = "test-analysis-1"
+			analysisResult.Namespace = "default"
+			analysisResult.Status.Options = tt.options
+
+			proposal := &agenticv1alpha1.Proposal{}
+			proposal.Name = "test"
+			proposal.Namespace = "default"
+			proposal.Status.Steps.Analysis.Results = []agenticv1alpha1.StepResultRef{
+				{Name: "test-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded},
+			}
+
+			approval := &agenticv1alpha1.ProposalApproval{
+				Spec: agenticv1alpha1.ProposalApprovalSpec{
+					Stages: []agenticv1alpha1.ApprovalStage{
+						{Type: agenticv1alpha1.ApprovalStageExecution, Execution: agenticv1alpha1.ExecutionApproval{Option: &tt.selectIdx}},
+					},
+				},
+			}
+
+			fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).WithStatusSubresource(analysisResult).Build()
+			r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+
+			got, err := r.trimNonSelectedOptions(context.Background(), proposal, approval, nil)
+			if err != nil {
+				t.Fatalf("trim error: %v", err)
+			}
+			if got == nil {
+				t.Fatal("trimNonSelectedOptions() returned nil")
+			}
+			if got.Title != tt.wantTitle {
+				t.Errorf("selectedOption().Title = %q, want %q", got.Title, tt.wantTitle)
+			}
+		})
 	}
 }
 
@@ -113,34 +198,36 @@ func TestMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestSelectedOption_OutOfRange(t *testing.T) {
+func TestTrimNonSelectedOptions_OutOfRange(t *testing.T) {
 	scheme := testScheme()
-
-	proposal := &agenticv1alpha1.Proposal{}
-	proposal.Name = "test"
-	proposal.Namespace = "default"
-	proposal.Status.Steps.Analysis.SelectedOption = ptr32(5)
-	proposal.Status.Steps.Analysis.Results = []agenticv1alpha1.StepResultRef{
-		{Name: "test-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded},
-	}
 
 	analysisResult := &agenticv1alpha1.AnalysisResult{}
 	analysisResult.Name = "test-analysis-1"
 	analysisResult.Namespace = "default"
 	analysisResult.Status.Options = []agenticv1alpha1.RemediationOption{
-		{Title: "A"},
-		{Title: "B"},
-		{Title: "C"},
+		{Title: "A"}, {Title: "B"},
 	}
 
-	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).Build()
+	proposal := &agenticv1alpha1.Proposal{}
+	proposal.Name = "test"
+	proposal.Namespace = "default"
+	proposal.Status.Steps.Analysis.Results = []agenticv1alpha1.StepResultRef{
+		{Name: "test-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded},
+	}
+
+	approval := &agenticv1alpha1.ProposalApproval{
+		Spec: agenticv1alpha1.ProposalApprovalSpec{
+			Stages: []agenticv1alpha1.ApprovalStage{
+				{Type: agenticv1alpha1.ApprovalStageExecution, Execution: agenticv1alpha1.ExecutionApproval{Option: ptr32(5)}},
+			},
+		},
+	}
+
+	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).WithStatusSubresource(analysisResult).Build()
 	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
 
-	got, err := r.selectedOption(context.Background(), proposal)
-	if err != nil {
-		t.Fatalf("selectedOption() error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("selectedOption() should return nil for out-of-range index, got %+v", got)
+	_, err := r.trimNonSelectedOptions(context.Background(), proposal, approval, nil)
+	if err == nil {
+		t.Fatal("expected error for out-of-range option index")
 	}
 }

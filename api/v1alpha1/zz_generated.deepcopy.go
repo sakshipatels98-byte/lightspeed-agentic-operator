@@ -269,11 +269,6 @@ func (in *AnalysisStepStatus) DeepCopyInto(out *AnalysisStepStatus) {
 		}
 	}
 	out.Sandbox = in.Sandbox
-	if in.SelectedOption != nil {
-		in, out := &in.SelectedOption, &out.SelectedOption
-		*out = new(int32)
-		**out = **in
-	}
 	if in.Results != nil {
 		in, out := &in.Results, &out.Results
 		*out = make([]StepResultRef, len(*in))

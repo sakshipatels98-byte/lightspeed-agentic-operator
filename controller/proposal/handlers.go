@@ -106,7 +106,6 @@ func (r *ProposalReconciler) handleRevision(
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionExecuted)
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionVerified)
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionEscalated)
-	proposal.Status.Steps.Analysis.SelectedOption = nil
 	resetExecutionAndVerification(&proposal.Status.Steps)
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
 		Type:               agenticv1alpha1.ProposalConditionAnalyzed,
@@ -207,22 +206,9 @@ func (r *ProposalReconciler) handleExecution(
 		}
 	}
 
-	// Copy selected option from ProposalApproval.
-	// Skip if already set (e.g., on retry after verification failure).
-	if proposal.Status.Steps.Analysis.SelectedOption == nil {
-		base := proposal.DeepCopy()
-		option := getStageOption(approval, policy)
-		if option != nil {
-			proposal.Status.Steps.Analysis.SelectedOption = option
-		}
-		if err := r.statusPatch(ctx, proposal, base); err != nil {
-			return ctrl.Result{}, fmt.Errorf("persist selected option: %w", err)
-		}
-	}
-
-	selectedOption, selErr := r.selectedOption(ctx, proposal)
-	if selErr != nil {
-		return r.failStep(ctx, log, proposal, agenticv1alpha1.ProposalConditionExecuted, fmt.Errorf("resolve selected option: %w", selErr))
+	selectedOption, trimErr := r.trimNonSelectedOptions(ctx, proposal, approval, policy)
+	if trimErr != nil {
+		return r.failStep(ctx, log, proposal, agenticv1alpha1.ProposalConditionExecuted, trimErr)
 	}
 
 	base := proposal.DeepCopy()

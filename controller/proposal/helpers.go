@@ -131,9 +131,9 @@ func setVerificationSkipped(proposal *agenticv1alpha1.Proposal) {
 	})
 }
 
-func (r *ProposalReconciler) selectedOption(ctx context.Context, proposal *agenticv1alpha1.Proposal) (*agenticv1alpha1.RemediationOption, error) {
+func (r *ProposalReconciler) getLatestAnalysisResult(ctx context.Context, proposal *agenticv1alpha1.Proposal) (*agenticv1alpha1.AnalysisResult, error) {
 	analysis := proposal.Status.Steps.Analysis
-	if analysis.SelectedOption == nil || len(analysis.Results) == 0 {
+	if len(analysis.Results) == 0 {
 		return nil, nil
 	}
 	latestRef := analysis.Results[len(analysis.Results)-1]
@@ -141,12 +141,48 @@ func (r *ProposalReconciler) selectedOption(ctx context.Context, proposal *agent
 	if err := r.Get(ctx, types.NamespacedName{Name: latestRef.Name, Namespace: proposal.Namespace}, &result); err != nil {
 		return nil, fmt.Errorf("get AnalysisResult %s: %w", latestRef.Name, err)
 	}
-	idx := int(*analysis.SelectedOption)
-	if idx < 0 || idx >= len(result.Status.Options) {
-		r.Log.Info("selectedOption index out of range", "index", idx, "options", len(result.Status.Options), "proposal", proposal.Name)
+	return &result, nil
+}
+
+func (r *ProposalReconciler) selectedOption(ctx context.Context, proposal *agenticv1alpha1.Proposal) (*agenticv1alpha1.RemediationOption, error) {
+	result, err := r.getLatestAnalysisResult(ctx, proposal)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || len(result.Status.Options) == 0 {
 		return nil, nil
 	}
-	return &result.Status.Options[idx], nil
+	return &result.Status.Options[0], nil
+}
+
+// trimNonSelectedOptions keeps only the user-approved option on the
+// AnalysisResult, discarding the rest, and returns it. The selected
+// index comes from the ProposalApproval's execution stage.
+func (r *ProposalReconciler) trimNonSelectedOptions(ctx context.Context, proposal *agenticv1alpha1.Proposal, approval *agenticv1alpha1.ProposalApproval, policy *agenticv1alpha1.ApprovalPolicy) (*agenticv1alpha1.RemediationOption, error) {
+	result, err := r.getLatestAnalysisResult(ctx, proposal)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || len(result.Status.Options) == 0 {
+		return nil, nil
+	}
+
+	if len(result.Status.Options) == 1 {
+		return &result.Status.Options[0], nil
+	}
+
+	idx := int(*getStageOption(approval, policy))
+	if idx < 0 || idx >= len(result.Status.Options) {
+		return nil, fmt.Errorf("selected option index %d out of range (have %d options)", idx, len(result.Status.Options))
+	}
+
+	selected := result.Status.Options[idx]
+	base := result.DeepCopy()
+	result.Status.Options = []agenticv1alpha1.RemediationOption{selected}
+	if err := r.Status().Patch(ctx, result, client.MergeFrom(base)); err != nil {
+		return nil, fmt.Errorf("trim AnalysisResult options: %w", err)
+	}
+	return &result.Status.Options[0], nil
 }
 
 func resetExecutionAndVerification(steps *agenticv1alpha1.StepsStatus) {

@@ -38,13 +38,11 @@ func TestGet_BasicDetail(t *testing.T) {
 func TestGet_WithAnalysisResults(t *testing.T) {
 	streams, out, _ := fakeStreams()
 	p := testProposalWithStatus("fix-crash", "default", agenticv1alpha1.ProposalPhaseExecuting)
-	selected := int32(0)
 	p.Status.Steps.Analysis = agenticv1alpha1.AnalysisStepStatus{
 		Conditions: []metav1.Condition{
 			{Type: "Analyzed", Status: metav1.ConditionTrue, Reason: "Success", LastTransitionTime: metav1.Now()},
 		},
-		SelectedOption: &selected,
-		Results:        []agenticv1alpha1.StepResultRef{{Name: "fix-crash-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded}},
+		Results: []agenticv1alpha1.StepResultRef{{Name: "fix-crash-analysis-1", Outcome: agenticv1alpha1.ActionOutcomeSucceeded}},
 	}
 
 	fc := fake.NewClientBuilder().WithScheme(testScheme()).
@@ -63,9 +61,6 @@ func TestGet_WithAnalysisResults(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, "fix-crash-analysis-1") {
 		t.Error("expected result ref name in output")
-	}
-	if !strings.Contains(output, "Selected Option: 0") {
-		t.Error("expected selected option in output")
 	}
 }
 
