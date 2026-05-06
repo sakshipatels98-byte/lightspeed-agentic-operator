@@ -114,8 +114,6 @@ const (
 // This is part of a RemediationOption and is presented to the user after
 // analysis, before approval. The risk and reversibility assessments help
 // users make informed approval decisions.
-//
-// +kubebuilder:validation:XValidation:rule="!has(self.reversible) || self.reversible == 'Irreversible' || has(self.rollbackPlan)",message="rollbackPlan is required when reversible is Reversible or Partial"
 type ProposalResult struct {
 	// description is a Markdown-formatted summary of the overall remediation
 	// approach. Maximum 8192 characters.
@@ -166,8 +164,8 @@ type VerificationStep struct {
 	Name string `json:"name,omitempty"`
 	// command is the command or API call to run for this check
 	// (e.g., "oc get pod -n production -l app=web -o jsonpath='{.items[0].status.phase}'").
-	// Must be 1-4096 characters.
-	// +required
+	// Maximum 4096 characters.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=4096
 	Command string `json:"command,omitempty"`
@@ -195,8 +193,8 @@ type RollbackPlan struct {
 	// +kubebuilder:validation:MaxLength=4096
 	Description string `json:"description,omitempty"`
 	// command is the rollback command or steps to execute.
-	// Must be 1-4096 characters.
-	// +required
+	// Maximum 4096 characters.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=4096
 	Command string `json:"command,omitempty"`
@@ -289,6 +287,7 @@ type RBACRule struct {
 // per proposal and binds these permissions via Role (namespace-scoped) or
 // ClusterRole (cluster-scoped) before launching the execution sandbox.
 // All RBAC resources are cleaned up after the proposal reaches a terminal state.
+//
 // +kubebuilder:validation:MinProperties=1
 type RBACResult struct {
 	// namespaceScoped are rules that will be applied via Role + RoleBinding

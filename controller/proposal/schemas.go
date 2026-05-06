@@ -1,6 +1,10 @@
 package proposal
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	agenticv1alpha1 "github.com/openshift/lightspeed-agentic-operator/api/v1alpha1"
+)
 
 // Default JSON Schemas sent to the agent for LLM structured output enforcement.
 // Each phase has a known response shape. Components can override via
@@ -114,7 +118,7 @@ var AnalysisOutputSchema = json.RawMessage(`{
             }
           }
         },
-        "required": ["title", "diagnosis", "proposal", "rbac", "verification"]
+        "required": ["title", "diagnosis", "proposal", "verification"]
       }
     }
   },
@@ -190,4 +194,24 @@ var defaultOutputSchemas = map[string]json.RawMessage{
 	"execution":    ExecutionOutputSchema,
 	"verification": VerificationOutputSchema,
 	"escalation":   EscalationOutputSchema,
+}
+
+func outputSchemaForStep(stepName string, proposal *agenticv1alpha1.Proposal) json.RawMessage {
+	if stepName != "analysis" {
+		return defaultOutputSchemas[stepName]
+	}
+	required := []any{"title", "diagnosis", "proposal"}
+	if !proposal.Spec.Execution.IsZero() {
+		required = append(required, "rbac")
+	}
+	if !proposal.Spec.Verification.IsZero() {
+		required = append(required, "verification")
+	}
+	var schema map[string]any
+	_ = json.Unmarshal(AnalysisOutputSchema, &schema)
+	options := schema["properties"].(map[string]any)["options"].(map[string]any)
+	items := options["items"].(map[string]any)
+	items["required"] = required
+	result, _ := json.Marshal(schema)
+	return result
 }

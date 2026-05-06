@@ -196,7 +196,7 @@ func (s *SandboxAgentCaller) callWithSandbox(
 		agentURL = fmt.Sprintf("http://%s:8080", endpoint)
 	}
 
-	schema := defaultOutputSchemas[stepName]
+	schema := outputSchemaForStep(stepName, proposal)
 	if step.Tools != nil && step.Tools.OutputSchema != nil {
 		if b, err := json.Marshal(step.Tools.OutputSchema); err == nil {
 			schema = b

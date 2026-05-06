@@ -3,6 +3,8 @@ package proposal
 import (
 	"encoding/json"
 	"testing"
+
+	agenticv1alpha1 "github.com/openshift/lightspeed-agentic-operator/api/v1alpha1"
 )
 
 func TestDefaultOutputSchemas_AllPhasesPresent(t *testing.T) {
@@ -139,10 +141,13 @@ func TestAnalysisOutputSchema_OptionsStructure(t *testing.T) {
 	for _, r := range required {
 		requiredSet[r.(string)] = true
 	}
-	for _, key := range []string{"title", "diagnosis", "proposal", "rbac", "verification"} {
+	for _, key := range []string{"title", "diagnosis", "proposal", "verification"} {
 		if !requiredSet[key] {
 			t.Errorf("%q should be required in options items", key)
 		}
+	}
+	if requiredSet["rbac"] {
+		t.Error("rbac should not be required — advisory proposals may omit it")
 	}
 }
 
@@ -177,6 +182,76 @@ func TestVerificationOutputSchema_ChecksUseResultNotPassed(t *testing.T) {
 	if !requiredSet["result"] {
 		t.Error("'result' should be required in checks items")
 	}
+}
+
+func TestOutputSchemaForStep_FullProposal_RequiresRBACAndVerification(t *testing.T) {
+	proposal := &agenticv1alpha1.Proposal{}
+	proposal.Spec.Execution = agenticv1alpha1.ProposalStep{Agent: "default"}
+	proposal.Spec.Verification = agenticv1alpha1.ProposalStep{Agent: "default"}
+
+	required := extractOptionRequired(t, outputSchemaForStep("analysis", proposal))
+	if !required["rbac"] {
+		t.Error("should require rbac when proposal has execution")
+	}
+	if !required["verification"] {
+		t.Error("should require verification when proposal has verification step")
+	}
+}
+
+func TestOutputSchemaForStep_ExecutionOnly_RequiresRBACNotVerification(t *testing.T) {
+	proposal := &agenticv1alpha1.Proposal{}
+	proposal.Spec.Execution = agenticv1alpha1.ProposalStep{Agent: "default"}
+
+	required := extractOptionRequired(t, outputSchemaForStep("analysis", proposal))
+	if !required["rbac"] {
+		t.Error("should require rbac when proposal has execution")
+	}
+	if required["verification"] {
+		t.Error("should not require verification when proposal has no verification step")
+	}
+}
+
+func TestOutputSchemaForStep_Advisory_OmitsRBACAndVerification(t *testing.T) {
+	proposal := &agenticv1alpha1.Proposal{}
+
+	required := extractOptionRequired(t, outputSchemaForStep("analysis", proposal))
+	if required["rbac"] {
+		t.Error("should not require rbac for advisory proposals")
+	}
+	if required["verification"] {
+		t.Error("should not require verification for advisory proposals")
+	}
+	if !required["title"] || !required["diagnosis"] || !required["proposal"] {
+		t.Error("should always require title, diagnosis, proposal")
+	}
+}
+
+func TestOutputSchemaForStep_NonAnalysis_ReturnsDefault(t *testing.T) {
+	proposal := &agenticv1alpha1.Proposal{}
+	proposal.Spec.Execution = agenticv1alpha1.ProposalStep{Agent: "default"}
+
+	for _, step := range []string{"execution", "verification", "escalation"} {
+		schema := outputSchemaForStep(step, proposal)
+		if string(schema) != string(defaultOutputSchemas[step]) {
+			t.Errorf("outputSchemaForStep(%q) should return default schema", step)
+		}
+	}
+}
+
+func extractOptionRequired(t *testing.T, schema json.RawMessage) map[string]bool {
+	t.Helper()
+	var parsed map[string]any
+	if err := json.Unmarshal(schema, &parsed); err != nil {
+		t.Fatalf("invalid schema JSON: %v", err)
+	}
+	options := parsed["properties"].(map[string]any)["options"].(map[string]any)
+	items := options["items"].(map[string]any)
+	required := items["required"].([]any)
+	set := map[string]bool{}
+	for _, r := range required {
+		set[r.(string)] = true
+	}
+	return set
 }
 
 func TestExecutionOutputSchema_ActionsUseOutcomeNotSuccess(t *testing.T) {
