@@ -29,6 +29,8 @@ const (
 	ApprovalModeManual    ApprovalMode = "Manual"
 )
 
+const DefaultMaxConcurrentProposals int32 = 5
+
 // ApprovalPolicyStage configures the approval mode for a single workflow step.
 type ApprovalPolicyStage struct {
 	// name is the workflow step this policy applies to.
@@ -64,6 +66,16 @@ type ApprovalPolicySpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=3
 	MaxAttempts int32 `json:"maxAttempts,omitempty"`
+
+	// maxConcurrentProposals sets the maximum number of proposals the
+	// operator reconciles concurrently. Higher values allow more proposals
+	// to run in parallel but consume more cluster resources.
+	// Defaults to 5 if omitted.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=20
+	// +default=5
+	MaxConcurrentProposals int32 `json:"maxConcurrentProposals,omitempty"`
 }
 
 // +kubebuilder:object:root=true

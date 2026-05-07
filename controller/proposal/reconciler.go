@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
@@ -161,6 +162,13 @@ func (r *ProposalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ProposalReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrent := int(agenticv1alpha1.DefaultMaxConcurrentProposals)
+	var policy agenticv1alpha1.ApprovalPolicy
+	if err := mgr.GetAPIReader().Get(context.Background(), client.ObjectKey{Name: "cluster"}, &policy); err == nil {
+		if policy.Spec.MaxConcurrentProposals > 0 {
+			maxConcurrent = int(policy.Spec.MaxConcurrentProposals)
+		}
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agenticv1alpha1.Proposal{}).
 		Owns(&agenticv1alpha1.ProposalApproval{}).
@@ -187,5 +195,6 @@ func (r *ProposalReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 		)).
 		Named("proposal").
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
 		Complete(r)
 }
