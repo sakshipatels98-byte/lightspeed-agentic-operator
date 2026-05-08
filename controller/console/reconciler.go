@@ -29,14 +29,21 @@ const (
 
 	servingCertAnnotation = "service.beta.openshift.io/serving-cert-secret-name"
 
-	nginxConfig = `error_log /dev/stdout info;
+	nginxConfig = `pid /tmp/nginx/nginx.pid;
+error_log /dev/stdout info;
 events {}
 http {
-  include            /etc/nginx/mime.types;
-  default_type       application/octet-stream;
-  keepalive_timeout  65;
+  client_body_temp_path /tmp/nginx/client_body;
+  proxy_temp_path       /tmp/nginx/proxy;
+  fastcgi_temp_path     /tmp/nginx/fastcgi;
+  uwsgi_temp_path       /tmp/nginx/uwsgi;
+  scgi_temp_path        /tmp/nginx/scgi;
+  include               /etc/nginx/mime.types;
+  default_type          application/octet-stream;
+  keepalive_timeout     65;
   server {
     listen              9443 ssl;
+    listen              [::]:9443 ssl;
     ssl_certificate     /var/cert/tls.crt;
     ssl_certificate_key /var/cert/tls.key;
     root                /usr/share/nginx/html;
