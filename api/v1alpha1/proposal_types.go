@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -146,6 +147,61 @@ const (
 	SandboxStepEscalation SandboxStep = "Escalation"
 )
 
+// AnalysisOutputMode controls which built-in properties the analysis output
+// schema includes. Use Default to get the full schema (diagnosis, proposal,
+// RBAC, verification). Use Minimal to get only the base structure (options
+// array with title) — suitable for analysis-only proposals that define
+// their own output shape via the schema field.
+//
+// Allowed values:
+//   - "Default" — Full analysis output schema with all built-in properties.
+//   - "Minimal" — Base structure only (options array with title per option).
+//
+// +kubebuilder:validation:Enum=Default;Minimal
+type AnalysisOutputMode string
+
+const (
+	// AnalysisOutputModeDefault uses the full analysis output schema with
+	// all built-in properties (diagnosis, proposal, summary, rbac, verification).
+	AnalysisOutputModeDefault AnalysisOutputMode = "Default"
+	// AnalysisOutputModeMinimal uses a minimal analysis output schema with
+	// only the base structure (options array with title per option).
+	// Built-in properties are omitted unless required by the workflow
+	// (e.g., rbac is added when an execution step exists).
+	AnalysisOutputModeMinimal AnalysisOutputMode = "Minimal"
+)
+
+// AnalysisOutput configures the analysis step's structured output schema.
+// The mode field controls which built-in properties are included. The
+// schema field optionally defines adapter-specific structured data that
+// is injected as a required "components" property in each option.
+//
+// +kubebuilder:validation:MinProperties=1
+// +kubebuilder:validation:XValidation:rule="self.mode != 'Minimal' || has(self.schema)",message="schema is required when mode is Minimal"
+type AnalysisOutput struct {
+	// mode controls which built-in properties the analysis output schema
+	// includes. Default includes all built-in properties (diagnosis,
+	// proposal, summary, rbac, verification). Minimal includes only the
+	// base structure (options array with title per option). Omit or set
+	// to "Default" for standard remediation workflows.
+	// +optional
+	// +default="Default"
+	Mode AnalysisOutputMode `json:"mode,omitempty"`
+
+	// schema is a JSON Schema injected as a required "components"
+	// property in each analysis output option. Use this to require
+	// adapter-specific structured data beyond the base analysis schema.
+	// +optional
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Schema *apiextensionsv1.JSONSchemaProps `json:"schema,omitempty"`
+}
+
+func (a AnalysisOutput) IsZero() bool {
+	return a.Mode == "" && a.Schema == nil
+}
+
 // Condition types for Proposal. Conditions are the primary mechanism for
 // observing proposal state. The operator sets these as the proposal
 // progresses through its lifecycle. Each condition has a type, status
@@ -188,18 +244,24 @@ const (
 // ProposalStep defines per-step configuration on a Proposal. The agent
 // field selects which cluster-scoped Agent CR handles this step. The
 // tools field provides per-step tools that replace the shared spec.tools.
+// +kubebuilder:validation:MinProperties=1
 type ProposalStep struct {
 	// agent is the name of the cluster-scoped Agent CR to use for this step.
 	// Defaults to "default" when omitted.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="!format.dns1123Subdomain().validate(self).hasValue()",message="must be a valid DNS subdomain: lowercase alphanumeric characters, hyphens, and dots"
 	Agent string `json:"agent,omitempty"`
 
 	// tools provides per-step tools that replace the shared spec.tools
 	// for this step. Use this when different steps need different skills.
 	// +optional
-	Tools *ToolsSpec `json:"tools,omitempty"`
+	Tools ToolsSpec `json:"tools,omitzero"`
+}
+
+func (s ProposalStep) IsZero() bool {
+	return s.Agent == "" && s.Tools.IsZero()
 }
 
 // ProposalSpec defines the desired state of Proposal.
@@ -210,6 +272,8 @@ type ProposalStep struct {
 //
 // +kubebuilder:validation:XValidation:rule="has(self.analysis)",message="analysis must be provided"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.targetNamespaces) || (has(self.targetNamespaces) && self.targetNamespaces == oldSelf.targetNamespaces)",message="targetNamespaces is immutable once set"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.analysisOutput) || (has(self.analysisOutput) && self.analysisOutput == oldSelf.analysisOutput)",message="analysisOutput is immutable once set"
+// +kubebuilder:validation:XValidation:rule="!has(self.analysisOutput) || self.analysisOutput.mode != 'Minimal' || (!has(self.execution) && !has(self.verification))",message="analysisOutput mode Minimal is only allowed for analysis-only proposals (no execution or verification steps)"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.tools) || (has(self.tools) && self.tools == oldSelf.tools)",message="tools is immutable once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.analysis) || (has(self.analysis) && self.analysis == oldSelf.analysis)",message="analysis is immutable once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.execution) || (has(self.execution) && self.execution == oldSelf.execution)",message="execution is immutable once set"
@@ -220,8 +284,8 @@ type ProposalSpec struct {
 	// the analysis agent as the primary input.
 	//
 	// Immutable: Proposals are run-to-completion (like Jobs). To change
-	// the request, create a new Proposal. Use spec.revision for iterative
-	// feedback on an existing analysis.
+	// the request, create a new Proposal. Use spec.revisionFeedback for
+	// iterative feedback on an existing analysis.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=32768
@@ -248,8 +312,20 @@ type ProposalSpec struct {
 	// +kubebuilder:validation:items:MaxLength=63
 	TargetNamespaces []string `json:"targetNamespaces,omitempty"`
 
+	// analysisOutput configures the analysis step's structured output.
+	// The mode field controls which built-in properties are included
+	// (Default: all; Minimal: only title). The schema field optionally
+	// defines adapter-specific structured data injected as "components".
+	//
+	// When omitted, the analysis uses the full default schema with all
+	// built-in properties and no custom components.
+	//
+	// Immutable: the output contract is fixed at creation.
+	// +optional
+	AnalysisOutput AnalysisOutput `json:"analysisOutput,omitzero"`
+
 	// tools defines the default tools for all steps: skills images,
-	// required secrets, and output schema. Per-step tools
+	// MCP servers, and required secrets. Per-step tools
 	// (analysis.tools, execution.tools, verification.tools) replace
 	// this default for individual steps.
 	//
@@ -264,21 +340,21 @@ type ProposalSpec struct {
 	//
 	// Immutable: agent and per-step tools are fixed at creation.
 	// +required
-	Analysis *ProposalStep `json:"analysis,omitempty"`
+	Analysis ProposalStep `json:"analysis,omitzero"`
 
 	// execution defines per-step configuration for the execution step.
 	// Omit to skip execution (advisory/assisted patterns).
 	//
 	// Immutable: agent and per-step tools are fixed at creation.
 	// +optional
-	Execution *ProposalStep `json:"execution,omitempty"`
+	Execution ProposalStep `json:"execution,omitzero"`
 
 	// verification defines per-step configuration for the verification step.
 	// Omit to skip verification.
 	//
 	// Immutable: agent and per-step tools are fixed at creation.
 	// +optional
-	Verification *ProposalStep `json:"verification,omitempty"`
+	Verification ProposalStep `json:"verification,omitzero"`
 
 	// timeoutMinutes sets the per-step timeout for sandbox agent calls.
 	// This controls how long the operator waits for the sandbox pod to
@@ -292,33 +368,15 @@ type ProposalSpec struct {
 	// +kubebuilder:validation:Maximum=60
 	TimeoutMinutes *int32 `json:"timeoutMinutes,omitempty"`
 
-	// maxAttempts sets the maximum number of retry attempts for this proposal.
+	// revisionFeedback is the user's free-text feedback requesting changes
+	// to the analysis. Patching this field bumps metadata.generation, which
+	// the operator detects (generation > observedGeneration) and triggers
+	// re-analysis with the feedback appended to the original request.
 	//
-	// Mutable: the console UI patches this at approval time so the user
-	// can set a custom retry limit before execution begins.
+	// Mutable: this is the only mutable spec field. All other spec fields
+	// are immutable via CEL rules, so generation changes signal revision.
 	// +optional
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=3
-	MaxAttempts int32 `json:"maxAttempts,omitempty"`
-
-	// revision is incremented by the user (or console UI) each time they
-	// submit revision feedback for the analysis.
-	//
-	// Mutable: this is the designated mutation point for iterative
-	// feedback. Incrementing revision triggers re-analysis with the
-	// user's revision context appended to the original request.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	Revision *int32 `json:"revision,omitempty"`
-
-	// revisionFeedback is the user's free-text feedback that accompanies a
-	// revision request. When the user increments spec.revision, they set
-	// this field to describe what they want changed about the analysis.
-	// The operator includes this text in the revision context sent to the
-	// analysis agent.
-	//
-	// Mutable: updated alongside spec.revision to provide revision context.
-	// +optional
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=32768
 	RevisionFeedback string `json:"revisionFeedback,omitempty"`
 }
@@ -329,6 +387,8 @@ type ProposalSpec struct {
 // including per-step results, retry history, and standard Kubernetes conditions.
 // An empty status (`status: {}`) is the initial state before the operator's
 // first reconcile.
+//
+// +kubebuilder:validation:MinProperties=1
 type ProposalStatus struct {
 	// conditions represent the latest available observations using the
 	// standard Kubernetes condition pattern. Condition types include:
@@ -338,14 +398,9 @@ type ProposalStatus struct {
 	// +patchStrategy=merge
 	// +patchMergeKey=type
 	// +optional
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
-
-	// attempts is the number of times this proposal has been attempted
-	// (1-based). Incremented each time the proposal is retried after a
-	// failure. Starts at 1 for the first attempt.
-	// +optional
-	Attempts *int32 `json:"attempts,omitempty"`
 
 	// steps contains the per-step observed state (analysis, execution,
 	// verification). Each step independently tracks its timing, sandbox
@@ -394,7 +449,6 @@ type ProposalStatus struct {
 //	  request: "Fix CVE-2024-1234 in nginx:1.21"
 //	  targetNamespaces:
 //	    - lightspeed-demo
-//	  maxAttempts: 3
 //	  tools:
 //	    skills:
 //	      - image: registry.redhat.io/acs/acs-lightspeed-skills:latest

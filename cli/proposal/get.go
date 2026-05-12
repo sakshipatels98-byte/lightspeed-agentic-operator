@@ -90,10 +90,6 @@ func (o *GetOptions) printDetail(p *agenticv1alpha1.Proposal) {
 	fmt.Fprintf(w, "Name:              %s\n", p.Name)
 	fmt.Fprintf(w, "Namespace:         %s\n", p.Namespace)
 	fmt.Fprintf(w, "Phase:             %s\n", ColoredPhase(agenticv1alpha1.DerivePhase(p.Status.Conditions)))
-	if p.Status.Attempts != nil {
-		maxAttempts := fmt.Sprintf("%d", p.Spec.MaxAttempts)
-		fmt.Fprintf(w, "Attempts:          %d / %s\n", *p.Status.Attempts, maxAttempts)
-	}
 	fmt.Fprintf(w, "Age:               %s\n", HumanDuration(p.CreationTimestamp.Time))
 	fmt.Fprintf(w, "Request:           %s\n", p.Spec.Request)
 
@@ -105,9 +101,6 @@ func (o *GetOptions) printDetail(p *agenticv1alpha1.Proposal) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Analysis:          %s\n",
 		stepStatusFromConditions(p.Status.Steps.Analysis.Conditions, agenticv1alpha1.ProposalConditionAnalyzed))
-	if p.Status.Steps.Analysis.SelectedOption != nil {
-		fmt.Fprintf(w, "  Selected Option: %d\n", *p.Status.Steps.Analysis.SelectedOption)
-	}
 	for _, ref := range p.Status.Steps.Analysis.Results {
 		fmt.Fprintf(w, "  Result:          %s (outcome=%s)\n", ref.Name, ref.Outcome)
 	}

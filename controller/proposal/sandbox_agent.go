@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -17,23 +16,20 @@ import (
 const defaultSandboxTimeout = 5 * time.Minute
 
 type analysisResponse struct {
-	Success    bool                                `json:"success"`
-	Options    []agenticv1alpha1.RemediationOption `json:"options"`
-	Components []apiextensionsv1.JSON              `json:"components,omitempty"`
+	Success bool                                `json:"success"`
+	Options []agenticv1alpha1.RemediationOption `json:"options"`
 }
 
 type executionResponse struct {
 	Success      bool                                  `json:"success"`
 	ActionsTaken []agenticv1alpha1.ExecutionAction      `json:"actionsTaken"`
 	Verification *agenticv1alpha1.ExecutionVerification `json:"verification,omitempty"`
-	Components   []apiextensionsv1.JSON                 `json:"components,omitempty"`
 }
 
 type verificationResponse struct {
-	Success    bool                         `json:"success"`
-	Checks     []agenticv1alpha1.VerifyCheck `json:"checks"`
-	Summary    string                        `json:"summary"`
-	Components []apiextensionsv1.JSON        `json:"components,omitempty"`
+	Success bool                         `json:"success"`
+	Checks  []agenticv1alpha1.VerifyCheck `json:"checks"`
+	Summary string                        `json:"summary"`
 }
 
 // SandboxAgentCaller implements AgentCaller by claiming a sandbox pod,
@@ -69,7 +65,7 @@ func stepString(step agenticv1alpha1.SandboxStep) string {
 
 func (s *SandboxAgentCaller) Analyze(ctx context.Context, proposal *agenticv1alpha1.Proposal, step resolvedStep, requestText string) (*AnalysisOutput, error) {
 	log := logf.FromContext(ctx)
-	query := buildAnalysisQuery(requestText)
+	query := buildAnalysisQuery(requestText, proposal)
 	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepAnalysis), step, query, buildAgentContext(proposal))
 	if err != nil {
 		return nil, fmt.Errorf("analysis agent call: %w", err)
@@ -86,14 +82,13 @@ func (s *SandboxAgentCaller) Analyze(ctx context.Context, proposal *agenticv1alp
 		return nil, fmt.Errorf("parse analysis response: %w", err)
 	}
 
-	log.Info("parsed analysis response", "success", resp.Success, "optionCount", len(resp.Options), "componentCount", len(resp.Components))
+	log.Info("parsed analysis response", "success", resp.Success, "optionCount", len(resp.Options))
 
 	sanitizeRBACApiGroups(resp.Options)
 
 	return &AnalysisOutput{
-		Success:    resp.Success,
-		Options:    resp.Options,
-		Components: resp.Components,
+		Success: resp.Success,
+		Options: resp.Options,
 	}, nil
 }
 
@@ -138,7 +133,6 @@ func (s *SandboxAgentCaller) Execute(ctx context.Context, proposal *agenticv1alp
 	out := &ExecutionOutput{
 		Success:      resp.Success,
 		ActionsTaken: resp.ActionsTaken,
-		Components:   resp.Components,
 	}
 	if resp.Verification != nil {
 		out.Verification = *resp.Verification
@@ -165,10 +159,9 @@ func (s *SandboxAgentCaller) Verify(ctx context.Context, proposal *agenticv1alph
 	}
 
 	return &VerificationOutput{
-		Success:    resp.Success,
-		Checks:     resp.Checks,
-		Summary:    resp.Summary,
-		Components: resp.Components,
+		Success: resp.Success,
+		Checks:  resp.Checks,
+		Summary: resp.Summary,
 	}, nil
 }
 
@@ -235,12 +228,7 @@ func (s *SandboxAgentCaller) callWithSandbox(
 		agentURL = fmt.Sprintf("http://%s:8080", endpoint)
 	}
 
-	schema := defaultOutputSchemas[stepName]
-	if step.Tools != nil && step.Tools.OutputSchema != nil {
-		if b, err := json.Marshal(step.Tools.OutputSchema); err == nil {
-			schema = b
-		}
-	}
+	schema := outputSchemaForStep(stepName, proposal)
 
 	client := s.ClientFactory(agentURL, timeout)
 	resp, err := client.Run(ctx, "", query, schema, agentCtx)
@@ -321,10 +309,6 @@ func collectFailedResults(results []agenticv1alpha1.StepResultRef, stepName stri
 func buildAgentContext(proposal *agenticv1alpha1.Proposal) *agentContext {
 	ctx := &agentContext{
 		TargetNamespaces: proposal.Spec.TargetNamespaces,
-	}
-
-	if proposal.Status.Attempts != nil {
-		ctx.Attempt = *proposal.Status.Attempts
 	}
 
 	ctx.PreviousAttempts = append(ctx.PreviousAttempts, collectFailedResults(proposal.Status.Steps.Analysis.Results, "analysis")...)

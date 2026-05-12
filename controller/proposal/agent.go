@@ -3,16 +3,13 @@ package proposal
 import (
 	"context"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
 	agenticv1alpha1 "github.com/openshift/lightspeed-agentic-operator/api/v1alpha1"
 )
 
 // AnalysisOutput holds the analysis agent's output.
 type AnalysisOutput struct {
-	Success    bool
-	Options    []agenticv1alpha1.RemediationOption
-	Components []apiextensionsv1.JSON
+	Success bool
+	Options []agenticv1alpha1.RemediationOption
 }
 
 // ExecutionOutput holds the execution agent's output.
@@ -20,15 +17,13 @@ type ExecutionOutput struct {
 	Success      bool
 	ActionsTaken []agenticv1alpha1.ExecutionAction
 	Verification agenticv1alpha1.ExecutionVerification
-	Components   []apiextensionsv1.JSON
 }
 
 // VerificationOutput holds the verification agent's output.
 type VerificationOutput struct {
-	Success    bool
-	Checks     []agenticv1alpha1.VerifyCheck
-	Summary    string
-	Components []apiextensionsv1.JSON
+	Success bool
+	Checks  []agenticv1alpha1.VerifyCheck
+	Summary string
 }
 
 // EscalationOutput holds the escalation agent's output.

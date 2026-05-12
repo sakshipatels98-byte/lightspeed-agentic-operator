@@ -139,10 +139,9 @@ type ProposalResult struct {
 	Reversible Reversibility `json:"reversible,omitempty"`
 	// estimatedImpact is a Markdown-formatted description of the expected
 	// impact of the remediation on the system
-	// (e.g., "Brief pod restart, ~30s downtime"). Omit when impact is
-	// unknown; an empty string is treated the same as omitted.
+	// (e.g., "Brief pod restart, ~30s downtime").
 	// Maximum 1024 characters.
-	// +optional
+	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	EstimatedImpact string `json:"estimatedImpact,omitempty"`
@@ -165,14 +164,14 @@ type VerificationStep struct {
 	Name string `json:"name,omitempty"`
 	// command is the command or API call to run for this check
 	// (e.g., "oc get pod -n production -l app=web -o jsonpath='{.items[0].status.phase}'").
-	// Must be 1-4096 characters.
-	// +required
+	// Maximum 4096 characters.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=4096
 	Command string `json:"command,omitempty"`
 	// expected is the expected output or condition
 	// (e.g., "Running", "ready=true"). Maximum 1024 characters.
-	// +required
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Expected string `json:"expected,omitempty"`
@@ -194,8 +193,8 @@ type RollbackPlan struct {
 	// +kubebuilder:validation:MaxLength=4096
 	Description string `json:"description,omitempty"`
 	// command is the rollback command or steps to execute.
-	// Must be 1-4096 characters.
-	// +required
+	// Maximum 4096 characters.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=4096
 	Command string `json:"command,omitempty"`
@@ -237,14 +236,14 @@ type RBACRule struct {
 	// +kubebuilder:validation:XValidation:rule="!format.dns1123Label().validate(self).hasValue()",message="must be a valid DNS label: lowercase alphanumeric characters and hyphens, starting with an alphabetic character and ending with an alphanumeric character"
 	Namespace string `json:"namespace,omitempty"`
 	// apiGroups are the API groups for this rule (e.g., "", "apps", "batch").
-	// Maximum 20 items.
+	// The empty string "" represents the core API group (pods, services, etc.).
+	// Maximum 20 items, each up to 253 characters.
 	// +required
 	// +listType=atomic
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
-	// +kubebuilder:validation:items:MinLength=1
 	// +kubebuilder:validation:items:MaxLength=253
-	APIGroups []string `json:"apiGroups,omitempty"`
+	APIGroups []string `json:"apiGroups,omitempty"` //nolint:kubeapilinter // empty string "" is a valid core API group
 	// resources are the resource types (e.g., "pods", "deployments").
 	// Maximum 20 items.
 	// +required
@@ -288,6 +287,8 @@ type RBACRule struct {
 // per proposal and binds these permissions via Role (namespace-scoped) or
 // ClusterRole (cluster-scoped) before launching the execution sandbox.
 // All RBAC resources are cleaned up after the proposal reaches a terminal state.
+//
+// +kubebuilder:validation:MinProperties=1
 type RBACResult struct {
 	// namespaceScoped are rules that will be applied via Role + RoleBinding
 	// in the proposal's target namespaces. These are the most common rules.
@@ -311,14 +312,17 @@ type RBACResult struct {
 // RemediationOption represents a single remediation approach produced by
 // the analysis agent. The agent may return multiple options, each with
 // its own diagnosis, remediation plan, verification strategy, and RBAC
-// requirements. The user selects one option after analysis
-// (recorded in AnalysisStepStatus.selectedOption), and the operator uses
-// that option's RBAC and plan for the execution step.
+// requirements. When the user approves execution, the operator trims
+// the AnalysisResult to keep only the approved option and uses its
+// RBAC and plan for the execution step.
 //
 // The components field is an extensibility point for adapter-specific UI
 // data. For example, an ACS adapter might include violation details or
 // affected deployment information as components that the console plugin
 // renders with custom components.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.diagnosis) || has(self.proposal)",message="proposal is required when diagnosis is present"
+// +kubebuilder:validation:XValidation:rule="!has(self.proposal) || has(self.diagnosis)",message="diagnosis is required when proposal is present"
 type RemediationOption struct {
 	// title is a short Markdown-formatted name for this option
 	// (e.g., "Increase memory limit", "Restart with backoff").
@@ -334,10 +338,14 @@ type RemediationOption struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Summary string `json:"summary,omitempty"`
 	// diagnosis contains the root cause analysis specific to this option.
-	// +required
+	// Present when analysisOutput mode is Default (or omitted). Omitted
+	// when mode is Minimal.
+	// +optional
 	Diagnosis DiagnosisResult `json:"diagnosis,omitzero"`
 	// proposal contains the remediation plan for this option.
-	// +required
+	// Present when analysisOutput mode is Default (or omitted). Omitted
+	// when mode is Minimal without an execution step.
+	// +optional
 	Proposal ProposalResult `json:"proposal,omitzero"`
 	// verification contains the verification plan. Omitted when
 	// verification is skipped in the workflow.
@@ -348,12 +356,12 @@ type RemediationOption struct {
 	// actual Kubernetes RBAC resources. Omitted for advisory-only options.
 	// +optional
 	RBAC RBACResult `json:"rbac,omitzero"`
-	// components contains optional adapter-defined structured data for
-	// custom console UI rendering. Each entry is a raw JSON object.
-	// Maximum 20 items.
+	// components contains optional adapter-defined structured data whose
+	// shape is determined by spec.analysisOutput.schema on the Proposal.
+	// The operator passes this through to the AnalysisResult CR; the
+	// console renders it using adapter-specific UI components.
 	// +optional
-	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=20
-	Components []apiextensionsv1.JSON `json:"components,omitempty"`
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Components *apiextensionsv1.JSON `json:"components,omitempty"`
 }

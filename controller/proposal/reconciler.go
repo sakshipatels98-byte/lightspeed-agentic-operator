@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
@@ -66,16 +67,6 @@ func (r *ProposalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	// --- Initialize status on first reconcile ---
-	if proposal.Status.Attempts == nil {
-		base := proposal.DeepCopy()
-		one := int32(1)
-		proposal.Status.Attempts = &one
-		if err := r.Status().Patch(ctx, &proposal, client.MergeFrom(base)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("initialize status: %w", err)
-		}
-	}
-
 	phase := agenticv1alpha1.DerivePhase(proposal.Status.Conditions)
 
 	// --- Finalizer ---
@@ -126,10 +117,11 @@ func (r *ProposalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		log.Error(err, "workflow resolution failed")
 		base := proposal.DeepCopy()
 		meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-			Type:    agenticv1alpha1.ProposalConditionAnalyzed,
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonWorkflowFailed,
-			Message: err.Error(),
+			Type:               agenticv1alpha1.ProposalConditionAnalyzed,
+			Status:             metav1.ConditionFalse,
+			Reason:             reasonWorkflowFailed,
+			Message:            err.Error(),
+			ObservedGeneration: proposal.Generation,
 		})
 		if statusErr := r.statusPatch(ctx, &proposal, base); statusErr != nil {
 			log.Error(statusErr, "failed to patch status after workflow resolution failure")
@@ -137,7 +129,7 @@ func (r *ProposalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	log.Info("reconciling", "phase", phase, "attempts", *proposal.Status.Attempts)
+	log.Info("reconciling", "phase", phase)
 
 	// --- Phase routing ---
 	switch phase {
@@ -170,6 +162,13 @@ func (r *ProposalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ProposalReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	maxConcurrent := int(agenticv1alpha1.DefaultMaxConcurrentProposals)
+	var policy agenticv1alpha1.ApprovalPolicy
+	if err := mgr.GetAPIReader().Get(context.Background(), client.ObjectKey{Name: "cluster"}, &policy); err == nil {
+		if policy.Spec.MaxConcurrentProposals > 0 {
+			maxConcurrent = int(policy.Spec.MaxConcurrentProposals)
+		}
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agenticv1alpha1.Proposal{}).
 		Owns(&agenticv1alpha1.ProposalApproval{}).
@@ -196,5 +195,6 @@ func (r *ProposalReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 		)).
 		Named("proposal").
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrent}).
 		Complete(r)
 }

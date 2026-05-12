@@ -20,41 +20,29 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Namespaced
-// +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Proposal",type=string,JSONPath=`.proposalName`
-// +kubebuilder:printcolumn:name="Attempt",type=integer,JSONPath=`.attempt`
-// +kubebuilder:printcolumn:name="Outcome",type=string,JSONPath=`.status.conditions[?(@.type=="Completed")].reason`
-// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-
-// EscalationResult records the output of the escalation step. Created by
-// the operator after the escalation agent completes. Owned by the parent
-// Proposal for garbage collection.
-type EscalationResult struct {
-	metav1.TypeMeta `json:",inline"`
-
+// EscalationResultStatus is the status of an EscalationResult.
+//
+// +kubebuilder:validation:MinProperties=1
+type EscalationResultStatus struct {
+	// conditions track the lifecycle of this result.
+	// +listType=map
+	// +listMapKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	// proposalName is the name of the parent Proposal in the same namespace.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	ProposalName string `json:"proposalName"`
-
-	// attempt is the 1-based overall attempt number.
-	// +required
-	// +kubebuilder:validation:Minimum=1
-	Attempt int32 `json:"attempt"`
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=8
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 
 	// summary is a Markdown-formatted escalation summary.
 	// +optional
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=32768
 	Summary string `json:"summary,omitempty"`
 
 	// content is freeform escalation content produced by the agent.
 	// +optional
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=65536
 	Content string `json:"content,omitempty"`
 
@@ -64,12 +52,45 @@ type EscalationResult struct {
 
 	// failureReason is populated when the step failed due to a system error.
 	// +optional
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=8192
 	FailureReason string `json:"failureReason,omitempty"`
+}
 
-	// status contains conditions tracking the result lifecycle.
+// EscalationResultSpec contains the immutable identity fields for an EscalationResult.
+type EscalationResultSpec struct {
+	// proposalName is the name of the parent Proposal in the same namespace.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	ProposalName string `json:"proposalName,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Proposal",type=string,JSONPath=`.spec.proposalName`
+// +kubebuilder:printcolumn:name="Outcome",type=string,JSONPath=`.status.conditions[?(@.type=="Completed")].reason`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+
+// EscalationResult records the output of the escalation step. Created by
+// the operator after the escalation agent completes. Owned by the parent
+// Proposal for garbage collection.
+type EscalationResult struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// metadata is the standard object metadata.
 	// +optional
-	Status ResultStatus `json:"status,omitempty"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// spec contains the immutable identity fields for this result.
+	// +required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec is immutable"
+	Spec EscalationResultSpec `json:"spec,omitzero"`
+
+	// status contains result data and conditions.
+	// +optional
+	Status EscalationResultStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true

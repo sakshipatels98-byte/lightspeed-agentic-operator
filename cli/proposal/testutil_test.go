@@ -28,17 +28,14 @@ func testProposal(name, namespace string) *agenticv1alpha1.Proposal {
 		Spec: agenticv1alpha1.ProposalSpec{
 			Request:          "Pod crashing in production",
 			TargetNamespaces: []string{"production"},
-			Analysis:         &agenticv1alpha1.ProposalStep{Agent: "default"},
+			Analysis:         agenticv1alpha1.ProposalStep{Agent: "default"},
 		},
 	}
 }
 
 func testProposalWithStatus(name, namespace string, phase agenticv1alpha1.ProposalPhase) *agenticv1alpha1.Proposal {
 	p := testProposal(name, namespace)
-	one := int32(1)
-	p.Status = agenticv1alpha1.ProposalStatus{
-		Attempts: &one,
-	}
+	p.Status = agenticv1alpha1.ProposalStatus{}
 	setPhaseConditions(&p.Status, phase)
 	return p
 }

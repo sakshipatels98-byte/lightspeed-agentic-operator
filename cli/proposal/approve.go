@@ -127,7 +127,7 @@ func (o *ApproveOptions) Run(ctx context.Context) error {
 
 		for _, s := range approval.Spec.Stages {
 			if s.Type == stageType {
-				if s.Denied {
+				if s.Decision == agenticv1alpha1.ApprovalDecisionDenied {
 					return fmt.Errorf("stage %s is already denied", stageName)
 				}
 				return fmt.Errorf("stage %s is already approved", stageName)
@@ -137,11 +137,11 @@ func (o *ApproveOptions) Run(ctx context.Context) error {
 		entry := agenticv1alpha1.ApprovalStage{Type: stageType}
 		switch stageType {
 		case agenticv1alpha1.ApprovalStageAnalysis:
-			entry.Analysis = &agenticv1alpha1.AnalysisApproval{Agent: o.agent}
+			entry.Analysis = agenticv1alpha1.AnalysisApproval{Agent: o.agent}
 		case agenticv1alpha1.ApprovalStageExecution:
-			entry.Execution = &agenticv1alpha1.ExecutionApproval{Agent: o.agent, Option: &o.option}
+			entry.Execution = agenticv1alpha1.ExecutionApproval{Agent: o.agent, Option: &o.option}
 		case agenticv1alpha1.ApprovalStageVerification:
-			entry.Verification = &agenticv1alpha1.VerificationApproval{Agent: o.agent}
+			entry.Verification = agenticv1alpha1.VerificationApproval{Agent: o.agent}
 		}
 		entries = append(entries, entry)
 	}
@@ -200,13 +200,13 @@ func (o *ApproveOptions) pendingStages(p *agenticv1alpha1.Proposal, approval *ag
 	}
 
 	var pending []string
-	if p.Spec.Analysis != nil && !approved[agenticv1alpha1.ApprovalStageAnalysis] {
+	if !p.Spec.Analysis.IsZero() && !approved[agenticv1alpha1.ApprovalStageAnalysis] {
 		pending = append(pending, "analysis")
 	}
-	if p.Spec.Execution != nil && !approved[agenticv1alpha1.ApprovalStageExecution] {
+	if !p.Spec.Execution.IsZero() && !approved[agenticv1alpha1.ApprovalStageExecution] {
 		pending = append(pending, "execution")
 	}
-	if p.Spec.Verification != nil && !approved[agenticv1alpha1.ApprovalStageVerification] {
+	if !p.Spec.Verification.IsZero() && !approved[agenticv1alpha1.ApprovalStageVerification] {
 		pending = append(pending, "verification")
 	}
 	return pending

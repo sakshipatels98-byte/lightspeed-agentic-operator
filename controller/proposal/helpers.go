@@ -90,10 +90,11 @@ func (r *ProposalReconciler) failStep(ctx context.Context, log logr.Logger, prop
 	}
 
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    conditionType,
-		Status:  metav1.ConditionFalse,
-		Reason:  reasonFailed,
-		Message: err.Error(),
+		Type:               conditionType,
+		Status:             metav1.ConditionFalse,
+		Reason:             reasonFailed,
+		Message:            err.Error(),
+		ObservedGeneration: proposal.Generation,
 	})
 	if statusErr := r.statusPatch(ctx, proposal, base); statusErr != nil {
 		log.Error(statusErr, "failed to patch status after step failure")
@@ -122,16 +123,17 @@ func isTerminal(phase agenticv1alpha1.ProposalPhase) bool {
 
 func setVerificationSkipped(proposal *agenticv1alpha1.Proposal) {
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionVerified,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonSkipped,
-		Message: "Verification step not configured in workflow",
+		Type:               agenticv1alpha1.ProposalConditionVerified,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonSkipped,
+		Message:            "Verification step not configured in workflow",
+		ObservedGeneration: proposal.Generation,
 	})
 }
 
-func (r *ProposalReconciler) selectedOption(ctx context.Context, proposal *agenticv1alpha1.Proposal) (*agenticv1alpha1.RemediationOption, error) {
+func (r *ProposalReconciler) getLatestAnalysisResult(ctx context.Context, proposal *agenticv1alpha1.Proposal) (*agenticv1alpha1.AnalysisResult, error) {
 	analysis := proposal.Status.Steps.Analysis
-	if analysis.SelectedOption == nil || len(analysis.Results) == 0 {
+	if len(analysis.Results) == 0 {
 		return nil, nil
 	}
 	latestRef := analysis.Results[len(analysis.Results)-1]
@@ -139,12 +141,48 @@ func (r *ProposalReconciler) selectedOption(ctx context.Context, proposal *agent
 	if err := r.Get(ctx, types.NamespacedName{Name: latestRef.Name, Namespace: proposal.Namespace}, &result); err != nil {
 		return nil, fmt.Errorf("get AnalysisResult %s: %w", latestRef.Name, err)
 	}
-	idx := int(*analysis.SelectedOption)
-	if idx < 0 || idx >= len(result.Options) {
-		r.Log.Info("selectedOption index out of range", "index", idx, "options", len(result.Options), "proposal", proposal.Name)
+	return &result, nil
+}
+
+func (r *ProposalReconciler) selectedOption(ctx context.Context, proposal *agenticv1alpha1.Proposal) (*agenticv1alpha1.RemediationOption, error) {
+	result, err := r.getLatestAnalysisResult(ctx, proposal)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || len(result.Status.Options) == 0 {
 		return nil, nil
 	}
-	return &result.Options[idx], nil
+	return &result.Status.Options[0], nil
+}
+
+// trimNonSelectedOptions keeps only the user-approved option on the
+// AnalysisResult, discarding the rest, and returns it. The selected
+// index comes from the ProposalApproval's execution stage.
+func (r *ProposalReconciler) trimNonSelectedOptions(ctx context.Context, proposal *agenticv1alpha1.Proposal, approval *agenticv1alpha1.ProposalApproval, policy *agenticv1alpha1.ApprovalPolicy) (*agenticv1alpha1.RemediationOption, error) {
+	result, err := r.getLatestAnalysisResult(ctx, proposal)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || len(result.Status.Options) == 0 {
+		return nil, nil
+	}
+
+	if len(result.Status.Options) == 1 {
+		return &result.Status.Options[0], nil
+	}
+
+	idx := int(*getStageOption(approval, policy))
+	if idx < 0 || idx >= len(result.Status.Options) {
+		return nil, fmt.Errorf("selected option index %d out of range (have %d options)", idx, len(result.Status.Options))
+	}
+
+	selected := result.Status.Options[idx]
+	base := result.DeepCopy()
+	result.Status.Options = []agenticv1alpha1.RemediationOption{selected}
+	if err := r.Status().Patch(ctx, result, client.MergeFrom(base)); err != nil {
+		return nil, fmt.Errorf("trim AnalysisResult options: %w", err)
+	}
+	return &result.Status.Options[0], nil
 }
 
 func resetExecutionAndVerification(steps *agenticv1alpha1.StepsStatus) {
@@ -152,15 +190,29 @@ func resetExecutionAndVerification(steps *agenticv1alpha1.StepsStatus) {
 	steps.Verification.Sandbox = agenticv1alpha1.SandboxInfo{}
 }
 
-func maxAttempts(proposal *agenticv1alpha1.Proposal) int {
-	return int(proposal.Spec.MaxAttempts)
+func maxAttempts(approval *agenticv1alpha1.ProposalApproval, policy *agenticv1alpha1.ApprovalPolicy) int {
+	ceiling := 1
+	if policy != nil && policy.Spec.MaxAttempts > 0 {
+		ceiling = int(policy.Spec.MaxAttempts)
+	}
+	if approval != nil {
+		for _, s := range approval.Spec.Stages {
+			if s.Type == agenticv1alpha1.ApprovalStageExecution && s.Execution.MaxAttempts > 0 {
+				v := int(s.Execution.MaxAttempts)
+				if v > ceiling {
+					return ceiling
+				}
+				return v
+			}
+		}
+	}
+	return ceiling
 }
 
 type escalationData struct {
 	Name                string
 	Namespace           string
 	Request             string
-	AttemptCount        int32
 	AnalysisResults     []agenticv1alpha1.StepResultRef
 	ExecutionResults    []agenticv1alpha1.StepResultRef
 	VerificationResults []agenticv1alpha1.StepResultRef
@@ -171,7 +223,6 @@ func buildEscalationRequest(proposal *agenticv1alpha1.Proposal) string {
 		Name:                proposal.Name,
 		Namespace:           proposal.Namespace,
 		Request:             proposal.Spec.Request,
-		AttemptCount:        *proposal.Status.Attempts,
 		AnalysisResults:     proposal.Status.Steps.Analysis.Results,
 		ExecutionResults:    proposal.Status.Steps.Execution.Results,
 		VerificationResults: proposal.Status.Steps.Verification.Results,
@@ -180,18 +231,18 @@ func buildEscalationRequest(proposal *agenticv1alpha1.Proposal) string {
 }
 
 func needsRevision(proposal *agenticv1alpha1.Proposal) bool {
-	if proposal.Spec.Revision == nil || *proposal.Spec.Revision <= 0 {
+	if proposal.Spec.RevisionFeedback == "" {
 		return false
 	}
-	analysis := proposal.Status.Steps.Analysis
-	if analysis.ObservedRevision == nil {
-		return true
+	analyzed := meta.FindStatusCondition(proposal.Status.Conditions, agenticv1alpha1.ProposalConditionAnalyzed)
+	if analyzed == nil {
+		return false
 	}
-	return *proposal.Spec.Revision > *analysis.ObservedRevision
+	return proposal.Generation > analyzed.ObservedGeneration
 }
 
 type revisionData struct {
-	Revision     int32
+	Generation   int64
 	ProposalName string
 	Namespace    string
 	Feedback     string
@@ -199,7 +250,7 @@ type revisionData struct {
 
 func buildRevisionContext(proposal *agenticv1alpha1.Proposal) string {
 	data := revisionData{
-		Revision:     *proposal.Spec.Revision,
+		Generation:   proposal.Generation,
 		ProposalName: proposal.Name,
 		Namespace:    proposal.Namespace,
 		Feedback:     proposal.Spec.RevisionFeedback,
@@ -223,11 +274,17 @@ func prettyJSON(v interface{}) string {
 }
 
 type analysisQuery struct {
-	Request string
+	Request         string
+	HasExecution    bool
+	HasVerification bool
 }
 
-func buildAnalysisQuery(requestText string) string {
-	return renderTemplate("analysis_query.tmpl", analysisQuery{Request: requestText})
+func buildAnalysisQuery(requestText string, proposal *agenticv1alpha1.Proposal) string {
+	return renderTemplate("analysis_query.tmpl", analysisQuery{
+		Request:         requestText,
+		HasExecution:    !proposal.Spec.Execution.IsZero(),
+		HasVerification: !proposal.Spec.Verification.IsZero(),
+	})
 }
 
 type executionQuery struct {

@@ -23,7 +23,7 @@ func (r *ProposalReconciler) handleAnalysis(
 	approval *agenticv1alpha1.ProposalApproval,
 	policy *agenticv1alpha1.ApprovalPolicy,
 ) (ctrl.Result, error) {
-	log.Info("handling analysis", "attempts", *proposal.Status.Attempts)
+	log.Info("handling analysis")
 
 	if isStageDenied(approval, agenticv1alpha1.SandboxStepAnalysis) {
 		return r.denyProposal(ctx, log, proposal, "Analysis denied by user")
@@ -48,10 +48,11 @@ func (r *ProposalReconciler) handleAnalysis(
 
 	base := proposal.DeepCopy()
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionAnalyzed,
-		Status:  metav1.ConditionUnknown,
-		Reason:  reasonInProgress,
-		Message: "Analysis agent is running",
+		Type:               agenticv1alpha1.ProposalConditionAnalyzed,
+		Status:             metav1.ConditionUnknown,
+		Reason:             reasonInProgress,
+		Message:            "Analysis agent is running",
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Analyzing: %w", err)
@@ -70,10 +71,11 @@ func (r *ProposalReconciler) handleAnalysis(
 	}
 	proposal.Status.Steps.Analysis.Results = append(proposal.Status.Steps.Analysis.Results, agenticv1alpha1.StepResultRef{Name: crName, Outcome: agenticv1alpha1.ActionOutcomeFromBool(analysisResult.Success)})
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionAnalyzed,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonComplete,
-		Message: fmt.Sprintf("Analysis complete with %d option(s)", len(analysisResult.Options)),
+		Type:               agenticv1alpha1.ProposalConditionAnalyzed,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonComplete,
+		Message:            fmt.Sprintf("Analysis complete with %d option(s)", len(analysisResult.Options)),
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update after analysis: %w", err)
@@ -91,8 +93,8 @@ func (r *ProposalReconciler) handleRevision(
 	proposal *agenticv1alpha1.Proposal,
 	resolved *resolvedWorkflow,
 ) (ctrl.Result, error) {
-	revision := *proposal.Spec.Revision
-	log.Info("handling revision", "revision", revision)
+	generation := proposal.Generation
+	log.Info("handling revision", "generation", generation)
 
 	analyzed := meta.FindStatusCondition(proposal.Status.Conditions, agenticv1alpha1.ProposalConditionAnalyzed)
 	if analyzed != nil && analyzed.Status == metav1.ConditionUnknown {
@@ -104,13 +106,13 @@ func (r *ProposalReconciler) handleRevision(
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionExecuted)
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionVerified)
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionEscalated)
-	proposal.Status.Steps.Analysis.SelectedOption = nil
 	resetExecutionAndVerification(&proposal.Status.Steps)
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionAnalyzed,
-		Status:  metav1.ConditionUnknown,
-		Reason:  reasonRevising,
-		Message: fmt.Sprintf("Re-analyzing for revision %d", revision),
+		Type:               agenticv1alpha1.ProposalConditionAnalyzed,
+		Status:             metav1.ConditionUnknown,
+		Reason:             reasonRevising,
+		Message:            fmt.Sprintf("Re-analyzing for generation %d", generation),
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Analyzing (revision): %w", err)
@@ -132,18 +134,18 @@ func (r *ProposalReconciler) handleRevision(
 		return r.failStep(ctx, log, proposal, agenticv1alpha1.ProposalConditionAnalyzed, fmt.Errorf("create analysis result: %w", crErr))
 	}
 	proposal.Status.Steps.Analysis.Results = append(proposal.Status.Steps.Analysis.Results, agenticv1alpha1.StepResultRef{Name: crName, Outcome: agenticv1alpha1.ActionOutcomeFromBool(analysisResult.Success)})
-	proposal.Status.Steps.Analysis.ObservedRevision = &revision
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionAnalyzed,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonRevisionComplete,
-		Message: fmt.Sprintf("Revision %d complete with %d option(s)", revision, len(analysisResult.Options)),
+		Type:               agenticv1alpha1.ProposalConditionAnalyzed,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonRevisionComplete,
+		Message:            fmt.Sprintf("Revision complete (generation %d) with %d option(s)", generation, len(analysisResult.Options)),
+		ObservedGeneration: generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update after revision: %w", err)
 	}
 
-	log.Info("revision analysis complete", "revision", revision, "options", len(analysisResult.Options))
+	log.Info("revision analysis complete", "generation", generation, "options", len(analysisResult.Options))
 	return ctrl.Result{}, nil
 }
 
@@ -161,10 +163,11 @@ func (r *ProposalReconciler) handleExecution(
 	if resolved.Execution == nil {
 		base := proposal.DeepCopy()
 		meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-			Type:    agenticv1alpha1.ProposalConditionExecuted,
-			Status:  metav1.ConditionTrue,
-			Reason:  reasonSkipped,
-			Message: "Execution step not configured",
+			Type:               agenticv1alpha1.ProposalConditionExecuted,
+			Status:             metav1.ConditionTrue,
+			Reason:             reasonSkipped,
+			Message:            "Execution step not configured",
+			ObservedGeneration: proposal.Generation,
 		})
 
 		if resolved.Verification == nil {
@@ -203,22 +206,9 @@ func (r *ProposalReconciler) handleExecution(
 		}
 	}
 
-	// Copy selected option from ProposalApproval.
-	// Skip if already set (e.g., on retry after verification failure).
-	if proposal.Status.Steps.Analysis.SelectedOption == nil {
-		base := proposal.DeepCopy()
-		option := getStageOption(approval, policy)
-		if option != nil {
-			proposal.Status.Steps.Analysis.SelectedOption = option
-		}
-		if err := r.statusPatch(ctx, proposal, base); err != nil {
-			return ctrl.Result{}, fmt.Errorf("persist selected option: %w", err)
-		}
-	}
-
-	selectedOption, selErr := r.selectedOption(ctx, proposal)
-	if selErr != nil {
-		return r.failStep(ctx, log, proposal, agenticv1alpha1.ProposalConditionExecuted, fmt.Errorf("resolve selected option: %w", selErr))
+	selectedOption, trimErr := r.trimNonSelectedOptions(ctx, proposal, approval, policy)
+	if trimErr != nil {
+		return r.failStep(ctx, log, proposal, agenticv1alpha1.ProposalConditionExecuted, trimErr)
 	}
 
 	base := proposal.DeepCopy()
@@ -234,10 +224,11 @@ func (r *ProposalReconciler) handleExecution(
 
 	meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionVerified)
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionExecuted,
-		Status:  metav1.ConditionUnknown,
-		Reason:  reasonInProgress,
-		Message: "Execution agent is running",
+		Type:               agenticv1alpha1.ProposalConditionExecuted,
+		Status:             metav1.ConditionUnknown,
+		Reason:             reasonInProgress,
+		Message:            "Execution agent is running",
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Executing: %w", err)
@@ -260,10 +251,11 @@ func (r *ProposalReconciler) handleExecution(
 	}
 	proposal.Status.Steps.Execution.Results = append(proposal.Status.Steps.Execution.Results, agenticv1alpha1.StepResultRef{Name: execCRName, Outcome: agenticv1alpha1.ActionOutcomeFromBool(execResult.Success)})
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionExecuted,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonComplete,
-		Message: "Execution completed",
+		Type:               agenticv1alpha1.ProposalConditionExecuted,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonComplete,
+		Message:            "Execution completed",
+		ObservedGeneration: proposal.Generation,
 	})
 
 	if resolved.Verification == nil {
@@ -320,10 +312,11 @@ func (r *ProposalReconciler) handleVerification(
 	}
 
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionVerified,
-		Status:  metav1.ConditionUnknown,
-		Reason:  reasonInProgress,
-		Message: "Verification agent is running",
+		Type:               agenticv1alpha1.ProposalConditionVerified,
+		Status:             metav1.ConditionUnknown,
+		Reason:             reasonInProgress,
+		Message:            "Verification agent is running",
+		ObservedGeneration: proposal.Generation,
 	})
 
 	selectedOption, selErr := r.selectedOption(ctx, proposal)
@@ -338,9 +331,8 @@ func (r *ProposalReconciler) handleVerification(
 		if err := r.Get(ctx, types.NamespacedName{Name: latestRef.Name, Namespace: proposal.Namespace}, &execCR); err == nil {
 			execOutput = &ExecutionOutput{
 				Success:      latestRef.Outcome == agenticv1alpha1.ActionOutcomeSucceeded,
-				ActionsTaken: execCR.ActionsTaken,
-				Verification: execCR.Verification,
-				Components:   execCR.Components,
+				ActionsTaken: execCR.Status.ActionsTaken,
+				Verification: execCR.Status.Verification,
 			}
 		}
 	}
@@ -372,19 +364,20 @@ func (r *ProposalReconciler) handleVerification(
 		if proposal.Status.Steps.Execution.RetryCount != nil {
 			retryCount = *proposal.Status.Steps.Execution.RetryCount
 		}
-		maxRetries := maxAttempts(proposal)
+		maxRetries := maxAttempts(approval, policy)
 
-		if int(retryCount) < maxRetries {
+		if int(retryCount) < maxRetries-1 {
 			next := retryCount + 1
-			log.Info("verification failed, retrying execution", "retryCount", next, "maxRetries", maxRetries, "summary", verifyResult.Summary)
+			log.Info("verification failed, retrying execution", "attempt", next+1, "maxAttempts", maxRetries, "summary", verifyResult.Summary)
 			proposal.Status.Steps.Execution.RetryCount = &next
 			resetExecutionAndVerification(&proposal.Status.Steps)
 			meta.RemoveStatusCondition(&proposal.Status.Conditions, agenticv1alpha1.ProposalConditionExecuted)
 			meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-				Type:    agenticv1alpha1.ProposalConditionVerified,
-				Status:  metav1.ConditionFalse,
-				Reason:  reasonRetryingExecution,
-				Message: fmt.Sprintf("Verification failed (attempt %d/%d): %s", next, maxRetries, verifyResult.Summary),
+				Type:               agenticv1alpha1.ProposalConditionVerified,
+				Status:             metav1.ConditionFalse,
+				Reason:             reasonRetryingExecution,
+				Message:            fmt.Sprintf("Verification failed (attempt %d/%d): %s", next+1, maxRetries, verifyResult.Summary),
+				ObservedGeneration: proposal.Generation,
 			})
 			if err := r.statusPatch(ctx, proposal, base); err != nil {
 				return ctrl.Result{}, fmt.Errorf("update for execution retry: %w", err)
@@ -394,16 +387,18 @@ func (r *ProposalReconciler) handleVerification(
 
 		log.Info("verification retries exhausted, escalating", "retryCount", retryCount, "summary", verifyResult.Summary)
 		meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-			Type:    agenticv1alpha1.ProposalConditionVerified,
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonRetriesExhausted,
-			Message: fmt.Sprintf("Verification failed after %d attempt(s): %s", retryCount, verifyResult.Summary),
+			Type:               agenticv1alpha1.ProposalConditionVerified,
+			Status:             metav1.ConditionFalse,
+			Reason:             reasonRetriesExhausted,
+			Message:            fmt.Sprintf("Verification failed after %d attempt(s): %s", retryCount, verifyResult.Summary),
+			ObservedGeneration: proposal.Generation,
 		})
 		meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-			Type:    agenticv1alpha1.ProposalConditionEscalated,
-			Status:  metav1.ConditionUnknown,
-			Reason:  reasonRetriesExhausted,
-			Message: fmt.Sprintf("Verification failed after %d attempt(s), escalating", retryCount),
+			Type:               agenticv1alpha1.ProposalConditionEscalated,
+			Status:             metav1.ConditionUnknown,
+			Reason:             reasonRetriesExhausted,
+			Message:            fmt.Sprintf("Verification failed after %d attempt(s), escalating", retryCount),
+			ObservedGeneration: proposal.Generation,
 		})
 		if err := r.statusPatch(ctx, proposal, base); err != nil {
 			return ctrl.Result{}, fmt.Errorf("update (retries exhausted): %w", err)
@@ -412,10 +407,11 @@ func (r *ProposalReconciler) handleVerification(
 	}
 
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionVerified,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonPassed,
-		Message: verifyResult.Summary,
+		Type:               agenticv1alpha1.ProposalConditionVerified,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonPassed,
+		Message:            verifyResult.Summary,
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Completed: %w", err)
@@ -490,10 +486,11 @@ func (r *ProposalReconciler) handleEscalation(
 
 	base := proposal.DeepCopy()
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionEscalated,
-		Status:  metav1.ConditionUnknown,
-		Reason:  reasonInProgress,
-		Message: "Escalation agent is running",
+		Type:               agenticv1alpha1.ProposalConditionEscalated,
+		Status:             metav1.ConditionUnknown,
+		Reason:             reasonInProgress,
+		Message:            "Escalation agent is running",
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Escalating: %w", err)
@@ -521,10 +518,11 @@ func (r *ProposalReconciler) handleEscalation(
 	}
 
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionEscalated,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonComplete,
-		Message: escalationResult.Summary,
+		Type:               agenticv1alpha1.ProposalConditionEscalated,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonComplete,
+		Message:            escalationResult.Summary,
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Escalated: %w", err)
@@ -551,10 +549,11 @@ func (r *ProposalReconciler) denyProposal(
 	log.Info("denying proposal", "message", message)
 	base := proposal.DeepCopy()
 	meta.SetStatusCondition(&proposal.Status.Conditions, metav1.Condition{
-		Type:    agenticv1alpha1.ProposalConditionDenied,
-		Status:  metav1.ConditionTrue,
-		Reason:  reasonUserDenied,
-		Message: message,
+		Type:               agenticv1alpha1.ProposalConditionDenied,
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonUserDenied,
+		Message:            message,
+		ObservedGeneration: proposal.Generation,
 	})
 	if err := r.statusPatch(ctx, proposal, base); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update to Denied: %w", err)

@@ -16,10 +16,6 @@ limitations under the License.
 
 package v1alpha1
 
-import (
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-)
-
 // SecretMountType specifies how a secret is exposed in the sandbox pod.
 //
 // Allowed values:
@@ -113,13 +109,14 @@ type SecretRequirement struct {
 }
 
 // ToolsSpec defines the tools available to an agent in its sandbox pod.
-// This includes skills images, required secrets, and an optional output
-// schema for structured agent output.
+// This includes skills images, MCP servers, and required secrets.
 //
 // ToolsSpec is specified on a Proposal either as a shared default
 // (spec.tools) or per-step (spec.analysis.tools, spec.execution.tools,
 // spec.verification.tools). Per-step tools replace the shared default
 // for that step.
+//
+// +kubebuilder:validation:MinProperties=1
 type ToolsSpec struct {
 	// skills defines one or more OCI images containing skills to mount
 	// in the agent's sandbox pod. The operator creates Kubernetes image
@@ -150,13 +147,8 @@ type ToolsSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
 	RequiredSecrets []SecretRequirement `json:"requiredSecrets,omitempty"`
+}
 
-	// outputSchema is a JSON Schema object that defines additional structured
-	// output fields beyond the base schema that every agent produces (diagnosis,
-	// proposal, RBAC, verification plan).
-	// +optional
-	// +kubebuilder:validation:Schemaless
-	// +kubebuilder:validation:Type=object
-	// +kubebuilder:pruning:PreserveUnknownFields
-	OutputSchema *apiextensionsv1.JSONSchemaProps `json:"outputSchema,omitempty"`
+func (t ToolsSpec) IsZero() bool {
+	return len(t.Skills) == 0 && len(t.MCPServers) == 0 && len(t.RequiredSecrets) == 0
 }

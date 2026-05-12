@@ -85,21 +85,21 @@ func (o *DenyOptions) Run(ctx context.Context) error {
 
 	for _, s := range approval.Spec.Stages {
 		if s.Type == stageType {
-			if s.Denied {
+			if s.Decision == agenticv1alpha1.ApprovalDecisionDenied {
 				return fmt.Errorf("stage %s is already denied", stageName)
 			}
 			return fmt.Errorf("stage %s is already approved, cannot deny", stageName)
 		}
 	}
 
-	entry := agenticv1alpha1.ApprovalStage{Type: stageType, Denied: true}
+	entry := agenticv1alpha1.ApprovalStage{Type: stageType, Decision: agenticv1alpha1.ApprovalDecisionDenied}
 	switch stageType {
 	case agenticv1alpha1.ApprovalStageAnalysis:
-		entry.Analysis = &agenticv1alpha1.AnalysisApproval{}
+		entry.Analysis = agenticv1alpha1.AnalysisApproval{}
 	case agenticv1alpha1.ApprovalStageExecution:
-		entry.Execution = &agenticv1alpha1.ExecutionApproval{}
+		entry.Execution = agenticv1alpha1.ExecutionApproval{}
 	case agenticv1alpha1.ApprovalStageVerification:
-		entry.Verification = &agenticv1alpha1.VerificationApproval{}
+		entry.Verification = agenticv1alpha1.VerificationApproval{}
 	}
 
 	patch := client.MergeFrom(approval.DeepCopy())
@@ -119,17 +119,17 @@ func (o *DenyOptions) nextPendingStage(p *agenticv1alpha1.Proposal, approval *ag
 	}
 
 	stages := []struct {
-		step     *agenticv1alpha1.ProposalStep
-		stageType agenticv1alpha1.ApprovalStageType
-		name     string
+		configured bool
+		stageType  agenticv1alpha1.ApprovalStageType
+		name       string
 	}{
-		{p.Spec.Analysis, agenticv1alpha1.ApprovalStageAnalysis, "analysis"},
-		{p.Spec.Execution, agenticv1alpha1.ApprovalStageExecution, "execution"},
-		{p.Spec.Verification, agenticv1alpha1.ApprovalStageVerification, "verification"},
+		{!p.Spec.Analysis.IsZero(), agenticv1alpha1.ApprovalStageAnalysis, "analysis"},
+		{!p.Spec.Execution.IsZero(), agenticv1alpha1.ApprovalStageExecution, "execution"},
+		{!p.Spec.Verification.IsZero(), agenticv1alpha1.ApprovalStageVerification, "verification"},
 	}
 
 	for _, s := range stages {
-		if s.step != nil && !approved[s.stageType] {
+		if s.configured && !approved[s.stageType] {
 			return s.name
 		}
 	}

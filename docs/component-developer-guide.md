@@ -241,13 +241,18 @@ tools:
 - `EnvVar` — injects the secret value as an environment variable (`envVar.name`).
 - `FilePath` — mounts the secret as a file at the given path (`filePath.path`).
 
-### Output schema
+### Analysis output
 
-Optionally define a JSON Schema for structured output beyond the base fields (diagnosis, proposal, RBAC, verification plan):
+Configure the analysis step's structured output via `spec.analysisOutput`. The `mode` field controls which built-in properties the schema includes:
+- **Default** (or omit entirely) — full schema with diagnosis, proposal, RBAC, verification plan
+- **Minimal** — base structure only (options array with title); requires `schema` to be set
+
+Optionally define a JSON Schema for adapter-specific structured data injected as a required "components" property:
 
 ```yaml
-tools:
-  outputSchema:
+analysisOutput:
+  mode: Default      # or "Minimal" for analysis-only with custom shape
+  schema:
     type: object
     properties:
       affectedCVEs:
@@ -505,6 +510,11 @@ type ProposalSpec struct {
     // Immutable. Per-step tools replace this for individual steps.
     Tools ToolsSpec
 
+    // Analysis output configuration (mode + optional custom schema).
+    // Mode: Default (full built-in schema) or Minimal (title only).
+    // Immutable after creation.
+    AnalysisOutput *AnalysisOutput
+
     // Per-step configuration. Analysis is required.
     // Omit execution to skip it (advisory/assisted).
     // Omit verification to skip it.
@@ -546,9 +556,6 @@ type ToolsSpec struct {
 
     // External MCP servers the agent can connect to. Max 20 servers.
     MCPServers []MCPServerConfig
-
-    // JSON Schema for structured output beyond the base fields.
-    OutputSchema *JSON
 }
 ```
 

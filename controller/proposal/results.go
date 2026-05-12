@@ -3,7 +3,6 @@ package proposal
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -11,10 +10,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	agenticv1alpha1 "github.com/openshift/lightspeed-agentic-operator/api/v1alpha1"
-)
-
-const (
-	LabelAttempt = "agentic.openshift.io/attempt"
 )
 
 func resultCRName(proposalName, step string, index int) string {
@@ -32,19 +27,11 @@ func proposalOwnerRef(proposal *agenticv1alpha1.Proposal) metav1.OwnerReference 
 	}
 }
 
-func resultLabels(proposalName, step string, attempt int32) map[string]string {
+func resultLabels(proposalName, step string) map[string]string {
 	return map[string]string{
 		LabelProposal: proposalName,
 		LabelStep:     step,
-		LabelAttempt:  strconv.Itoa(int(attempt)),
 	}
-}
-
-func proposalAttempt(proposal *agenticv1alpha1.Proposal) int32 {
-	if proposal.Status.Attempts != nil {
-		return *proposal.Status.Attempts
-	}
-	return 1
 }
 
 func executionRetryIndex(proposal *agenticv1alpha1.Proposal) int32 {
@@ -87,7 +74,6 @@ func (r *ProposalReconciler) createAnalysisResult(
 	failureReason string,
 ) (string, error) {
 	crName := resultCRName(proposal.Name, "analysis", len(proposal.Status.Steps.Analysis.Results)+1)
-	attempt := proposalAttempt(proposal)
 
 	outcome := agenticv1alpha1.ActionOutcomeFailed
 	if result != nil {
@@ -103,21 +89,21 @@ func (r *ProposalReconciler) createAnalysisResult(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            crName,
 			Namespace:       proposal.Namespace,
-			Labels:          resultLabels(proposal.Name, "analysis", attempt),
+			Labels:          resultLabels(proposal.Name, "analysis"),
 			OwnerReferences: []metav1.OwnerReference{proposalOwnerRef(proposal)},
 		},
-		ProposalName:  proposal.Name,
-		Attempt:       attempt,
-		Sandbox:       sandbox,
-		FailureReason: failureReason,
-		Status: agenticv1alpha1.ResultStatus{
-			Conditions: resultConditions(startTime, completedAt, outcome),
+		Spec: agenticv1alpha1.AnalysisResultSpec{
+			ProposalName: proposal.Name,
+		},
+		Status: agenticv1alpha1.AnalysisResultStatus{
+			Conditions:    resultConditions(startTime, completedAt, outcome),
+			Sandbox:       sandbox,
+			FailureReason: failureReason,
 		},
 	}
 
 	if result != nil {
-		cr.Options = result.Options
-		cr.Components = result.Components
+		cr.Status.Options = result.Options
 	}
 
 	return crName, createIdempotent(ctx, r.Client, cr, "AnalysisResult")
@@ -133,7 +119,6 @@ func (r *ProposalReconciler) createExecutionResult(
 	failureReason string,
 ) (string, error) {
 	crName := resultCRName(proposal.Name, "execution", len(proposal.Status.Steps.Execution.Results)+1)
-	attempt := proposalAttempt(proposal)
 
 	outcome := agenticv1alpha1.ActionOutcomeFailed
 	if result != nil {
@@ -149,23 +134,23 @@ func (r *ProposalReconciler) createExecutionResult(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            crName,
 			Namespace:       proposal.Namespace,
-			Labels:          resultLabels(proposal.Name, "execution", attempt),
+			Labels:          resultLabels(proposal.Name, "execution"),
 			OwnerReferences: []metav1.OwnerReference{proposalOwnerRef(proposal)},
 		},
-		ProposalName:  proposal.Name,
-		Attempt:       attempt,
-		RetryIndex:    executionRetryIndex(proposal),
-		Sandbox:       sandbox,
-		FailureReason: failureReason,
-		Status: agenticv1alpha1.ResultStatus{
-			Conditions: resultConditions(startTime, completedAt, outcome),
+		Spec: agenticv1alpha1.ExecutionResultSpec{
+			ProposalName: proposal.Name,
+			RetryIndex:   ptr.To(executionRetryIndex(proposal)),
+		},
+		Status: agenticv1alpha1.ExecutionResultStatus{
+			Conditions:    resultConditions(startTime, completedAt, outcome),
+			Sandbox:       sandbox,
+			FailureReason: failureReason,
 		},
 	}
 
 	if result != nil {
-		cr.ActionsTaken = result.ActionsTaken
-		cr.Verification = result.Verification
-		cr.Components = result.Components
+		cr.Status.ActionsTaken = result.ActionsTaken
+		cr.Status.Verification = result.Verification
 	}
 
 	return crName, createIdempotent(ctx, r.Client, cr, "ExecutionResult")
@@ -181,7 +166,6 @@ func (r *ProposalReconciler) createVerificationResult(
 	failureReason string,
 ) (string, error) {
 	crName := resultCRName(proposal.Name, "verification", len(proposal.Status.Steps.Verification.Results)+1)
-	attempt := proposalAttempt(proposal)
 
 	outcome := agenticv1alpha1.ActionOutcomeFailed
 	if result != nil {
@@ -197,23 +181,23 @@ func (r *ProposalReconciler) createVerificationResult(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            crName,
 			Namespace:       proposal.Namespace,
-			Labels:          resultLabels(proposal.Name, "verification", attempt),
+			Labels:          resultLabels(proposal.Name, "verification"),
 			OwnerReferences: []metav1.OwnerReference{proposalOwnerRef(proposal)},
 		},
-		ProposalName:  proposal.Name,
-		Attempt:       attempt,
-		RetryIndex:    executionRetryIndex(proposal),
-		Sandbox:       sandbox,
-		FailureReason: failureReason,
-		Status: agenticv1alpha1.ResultStatus{
-			Conditions: resultConditions(startTime, completedAt, outcome),
+		Spec: agenticv1alpha1.VerificationResultSpec{
+			ProposalName: proposal.Name,
+			RetryIndex:   ptr.To(executionRetryIndex(proposal)),
+		},
+		Status: agenticv1alpha1.VerificationResultStatus{
+			Conditions:    resultConditions(startTime, completedAt, outcome),
+			Sandbox:       sandbox,
+			FailureReason: failureReason,
 		},
 	}
 
 	if result != nil {
-		cr.Checks = result.Checks
-		cr.Summary = result.Summary
-		cr.Components = result.Components
+		cr.Status.Checks = result.Checks
+		cr.Status.Summary = result.Summary
 	}
 
 	return crName, createIdempotent(ctx, r.Client, cr, "VerificationResult")
@@ -229,7 +213,6 @@ func (r *ProposalReconciler) createEscalationResult(
 	failureReason string,
 ) (string, error) {
 	crName := resultCRName(proposal.Name, "escalation", len(proposal.Status.Steps.Escalation.Results)+1)
-	attempt := proposalAttempt(proposal)
 
 	outcome := agenticv1alpha1.ActionOutcomeFailed
 	if result != nil {
@@ -245,21 +228,22 @@ func (r *ProposalReconciler) createEscalationResult(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            crName,
 			Namespace:       proposal.Namespace,
-			Labels:          resultLabels(proposal.Name, "escalation", attempt),
+			Labels:          resultLabels(proposal.Name, "escalation"),
 			OwnerReferences: []metav1.OwnerReference{proposalOwnerRef(proposal)},
 		},
-		ProposalName:  proposal.Name,
-		Attempt:       attempt,
-		Sandbox:       sandbox,
-		FailureReason: failureReason,
-		Status: agenticv1alpha1.ResultStatus{
-			Conditions: resultConditions(startTime, completedAt, outcome),
+		Spec: agenticv1alpha1.EscalationResultSpec{
+			ProposalName: proposal.Name,
+		},
+		Status: agenticv1alpha1.EscalationResultStatus{
+			Conditions:    resultConditions(startTime, completedAt, outcome),
+			Sandbox:       sandbox,
+			FailureReason: failureReason,
 		},
 	}
 
 	if result != nil {
-		cr.Summary = result.Summary
-		cr.Content = result.Content
+		cr.Status.Summary = result.Summary
+		cr.Status.Content = result.Content
 	}
 
 	return crName, createIdempotent(ctx, r.Client, cr, "EscalationResult")
@@ -271,12 +255,15 @@ type statusHolder interface {
 	SetConditions([]metav1.Condition)
 }
 
-// createIdempotent creates obj then patches its status conditions. On
-// AlreadyExists the CR is assumed to already have its conditions from
-// the original create — conditions are not re-applied.
-func createIdempotent(ctx context.Context, c client.Client, obj statusHolder, kind string) error {
-	conditions := obj.GetConditions()
-	obj.SetConditions(nil)
+// createIdempotent creates obj then patches its full status. The Create
+// call writes identity fields (proposalName, etc.) but the API
+// server ignores .status on Create (status subresource). A follow-up
+// Status().Patch writes the complete status including result data and
+// conditions. On AlreadyExists the CR is assumed to already have its
+// status from the original create.
+func createIdempotent(ctx context.Context, c client.Client, obj client.Object, kind string) error {
+	// Save full object with status before Create strips it.
+	withStatus := obj.DeepCopyObject().(client.Object)
 
 	if err := c.Create(ctx, obj); err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -285,12 +272,11 @@ func createIdempotent(ctx context.Context, c client.Client, obj statusHolder, ki
 		return fmt.Errorf("create %s %s: %w", kind, obj.GetName(), err)
 	}
 
-	if len(conditions) > 0 {
-		base := obj.DeepCopyObject().(client.Object)
-		obj.SetConditions(conditions)
-		if err := c.Status().Patch(ctx, obj, client.MergeFrom(base)); err != nil {
-			return fmt.Errorf("patch %s %s status: %w", kind, obj.GetName(), err)
-		}
+	// After Create, obj has ResourceVersion but status is stripped.
+	// Use the saved copy (with full status) for the status patch.
+	withStatus.SetResourceVersion(obj.GetResourceVersion())
+	if err := c.Status().Patch(ctx, withStatus, client.MergeFrom(obj)); err != nil {
+		return fmt.Errorf("patch %s %s status: %w", kind, obj.GetName(), err)
 	}
 	return nil
 }

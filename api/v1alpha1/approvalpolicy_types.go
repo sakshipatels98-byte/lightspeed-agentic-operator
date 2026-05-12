@@ -29,42 +29,59 @@ const (
 	ApprovalModeManual    ApprovalMode = "Manual"
 )
 
+const DefaultMaxConcurrentProposals int32 = 5
+
 // ApprovalPolicyStage configures the approval mode for a single workflow step.
-//
-// +kubebuilder:validation:XValidation:rule="self.name != 'Execution' || self.approval != 'Automatic' || has(self.defaultOption)",message="defaultOption is required when execution approval is Automatic"
 type ApprovalPolicyStage struct {
 	// name is the workflow step this policy applies to.
+	// Allowed values: Analysis, Execution, Verification, Escalation.
 	// +required
-	Name SandboxStep `json:"name"`
+	Name SandboxStep `json:"name,omitempty"`
 
 	// approval controls whether this step auto-approves or requires
 	// explicit user approval on the ProposalApproval resource.
+	// Allowed values: Automatic (step runs without user approval),
+	// Manual (step waits for explicit approval on ProposalApproval).
 	// +required
-	Approval ApprovalMode `json:"approval"`
-
-	// defaultOption is the 0-based index into the analysis options array
-	// to use when execution is auto-approved. Required when name is
-	// Execution and approval is Automatic.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	DefaultOption *int32 `json:"defaultOption,omitempty"`
+	Approval ApprovalMode `json:"approval,omitempty"`
 }
 
 // ApprovalPolicySpec defines the desired state of ApprovalPolicy.
 //
-// +kubebuilder:validation:XValidation:rule="self.stages.all(s1, self.stages.all(s2, s1 == s2 || s1.name != s2.name))",message="stage names must be unique"
+// +kubebuilder:validation:MinProperties=1
 type ApprovalPolicySpec struct {
 	// stages configures the approval mode for each workflow step.
 	// Omitted steps default to Manual.
 	// +optional
-	// +listType=atomic
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=4
 	Stages []ApprovalPolicyStage `json:"stages,omitempty"`
+
+	// maxAttempts sets the maximum number of execution retry attempts
+	// allowed for proposals. When verification fails, the operator retries
+	// execution up to this limit before escalating. Defaults to 1 if omitted.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3
+	MaxAttempts int32 `json:"maxAttempts,omitempty"`
+
+	// maxConcurrentProposals sets the maximum number of proposals the
+	// operator reconciles concurrently. Higher values allow more proposals
+	// to run in parallel but consume more cluster resources.
+	// Defaults to 5 if omitted.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=20
+	// +default=5
+	MaxConcurrentProposals int32 `json:"maxConcurrentProposals,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="self.metadata.name == 'cluster'",message="ApprovalPolicy must be named 'cluster' (singleton)"
 
 // ApprovalPolicy is a cluster-scoped singleton that configures default
 // approval behavior for proposal workflow steps. The cluster admin creates
@@ -90,9 +107,11 @@ type ApprovalPolicySpec struct {
 type ApprovalPolicy struct {
 	metav1.TypeMeta `json:",inline"`
 
+	// metadata is the standard object metadata.
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
+	// spec defines the desired approval policy.
 	// +required
 	Spec ApprovalPolicySpec `json:"spec,omitzero"`
 }

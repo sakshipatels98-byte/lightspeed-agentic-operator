@@ -74,7 +74,7 @@ type ExecutionAction struct {
 	Description string `json:"description,omitempty"`
 	// outcome indicates whether this individual action succeeded.
 	// Must be one of: Succeeded, Failed.
-	// +optional
+	// +required
 	Outcome ActionOutcome `json:"outcome,omitempty"`
 	// output is the command output or API response from the action.
 	// Maximum 32768 characters.
@@ -99,7 +99,7 @@ type ExecutionVerification struct {
 	// conditionOutcome indicates whether the target condition improved
 	// after the remediation (e.g., pod is no longer CrashLoopBackOff).
 	// Must be one of: Improved, Unchanged, Degraded.
-	// +optional
+	// +required
 	ConditionOutcome ConditionOutcome `json:"conditionOutcome,omitempty"`
 	// summary is a Markdown-formatted summary of the inline verification.
 	// Maximum 4096 characters.
@@ -133,7 +133,7 @@ type VerifyCheck struct {
 	Value string `json:"value,omitempty"`
 	// result indicates whether the check's observed value matches
 	// the expected value. Must be one of: Passed, Failed.
-	// +optional
+	// +required
 	Result CheckResult `json:"result,omitempty"`
 }
 
@@ -143,15 +143,14 @@ type VerifyCheck struct {
 // console UI to stream sandbox pod logs in real time.
 type SandboxInfo struct {
 	// claimName is the name of the SandboxClaim resource that owns the
-	// sandbox pod. Omit when no sandbox has been claimed; an empty string
-	// is treated the same as omitted. Maximum 253 characters.
-	// +optional
+	// sandbox pod. Maximum 253 characters.
+	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	ClaimName string `json:"claimName,omitempty"`
 	// namespace is the namespace where the SandboxClaim and its pod live.
 	// Must be a valid RFC 1123 DNS label.
-	// +optional
+	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:XValidation:rule="!format.dns1123Label().validate(self).hasValue()",message="must be a valid DNS label: lowercase alphanumeric characters and hyphens, starting with an alphabetic character and ending with an alphanumeric character"
@@ -165,14 +164,16 @@ type StepResultRef struct {
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 	// outcome indicates the result of this step attempt.
 	// Must be one of: Succeeded, Failed.
 	// +required
-	Outcome ActionOutcome `json:"outcome"`
+	Outcome ActionOutcome `json:"outcome,omitempty"`
 }
 
 // AnalysisStepStatus is the observed state of the analysis step.
+//
+// +kubebuilder:validation:MinProperties=1
 type AnalysisStepStatus struct {
 	// conditions for this step.
 	// +listType=map
@@ -186,26 +187,18 @@ type AnalysisStepStatus struct {
 	// sandbox tracks the sandbox used.
 	// +optional
 	Sandbox SandboxInfo `json:"sandbox,omitzero"`
-	// selectedOption is the 0-based index into the options array
-	// of the latest AnalysisResult CR that the user approved.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	SelectedOption *int32 `json:"selectedOption,omitempty"`
-	// observedRevision is the revision number from spec.revision that this
-	// analysis was produced for. When spec.revision > observedRevision,
-	// the operator re-runs analysis with revision context.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	ObservedRevision *int32 `json:"observedRevision,omitempty"`
 	// results references AnalysisResult CRs, newest last.
 	// Each entry corresponds to one analysis attempt.
 	// +optional
 	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
 	Results []StepResultRef `json:"results,omitempty"`
 }
 
 // ExecutionStepStatus is the observed state of the execution step.
+//
+// +kubebuilder:validation:MinProperties=1
 type ExecutionStepStatus struct {
 	// conditions for this step.
 	// +listType=map
@@ -230,11 +223,14 @@ type ExecutionStepStatus struct {
 	// Each entry corresponds to one execution attempt (including retries).
 	// +optional
 	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
 	Results []StepResultRef `json:"results,omitempty"`
 }
 
 // VerificationStepStatus is the observed state of the verification step.
+//
+// +kubebuilder:validation:MinProperties=1
 type VerificationStepStatus struct {
 	// conditions for this step.
 	// +listType=map
@@ -252,6 +248,7 @@ type VerificationStepStatus struct {
 	// Each entry corresponds to one verification attempt (including retries).
 	// +optional
 	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
 	Results []StepResultRef `json:"results,omitempty"`
 }
@@ -259,6 +256,8 @@ type VerificationStepStatus struct {
 // EscalationStepStatus is the observed state of the escalation step.
 // The operator injects this step when retries are exhausted; it is not
 // declared in the Proposal spec.
+//
+// +kubebuilder:validation:MinProperties=1
 type EscalationStepStatus struct {
 	// conditions for this step.
 	// +listType=map
@@ -275,6 +274,7 @@ type EscalationStepStatus struct {
 	// results references EscalationResult CRs, newest last.
 	// +optional
 	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=20
 	Results []StepResultRef `json:"results,omitempty"`
 }
@@ -282,6 +282,8 @@ type EscalationStepStatus struct {
 // StepsStatus contains the per-step observed state for all workflow
 // steps. Each step status is populated independently as the proposal
 // progresses through its lifecycle. All fields are set by the operator.
+//
+// +kubebuilder:validation:MinProperties=1
 type StepsStatus struct {
 	// analysis is the observed state of the analysis step.
 	// +optional
