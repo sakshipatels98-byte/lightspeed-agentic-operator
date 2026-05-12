@@ -41,7 +41,7 @@ type verificationResponse struct {
 type SandboxAgentCaller struct {
 	Sandbox          SandboxProvider
 	K8sClient        client.Client
-	ClientFactory    func(endpoint string) AgentHTTPClientInterface
+	ClientFactory    func(endpoint string, timeout time.Duration) AgentHTTPClientInterface
 	Namespace        string
 	BaseTemplateName string
 	Timeout          time.Duration
@@ -50,7 +50,7 @@ type SandboxAgentCaller struct {
 func NewSandboxAgentCaller(
 	sandbox SandboxProvider,
 	k8sClient client.Client,
-	clientFactory func(endpoint string) AgentHTTPClientInterface,
+	clientFactory func(endpoint string, timeout time.Duration) AgentHTTPClientInterface,
 	namespace, baseTemplateName string,
 ) *SandboxAgentCaller {
 	return &SandboxAgentCaller{
@@ -68,22 +68,54 @@ func stepString(step agenticv1alpha1.SandboxStep) string {
 }
 
 func (s *SandboxAgentCaller) Analyze(ctx context.Context, proposal *agenticv1alpha1.Proposal, step resolvedStep, requestText string) (*AnalysisOutput, error) {
+	log := logf.FromContext(ctx)
 	query := buildAnalysisQuery(requestText)
 	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepAnalysis), step, query, buildAgentContext(proposal))
 	if err != nil {
 		return nil, fmt.Errorf("analysis agent call: %w", err)
 	}
 
+	truncated := string(raw)
+	if len(truncated) > 2000 {
+		truncated = truncated[:2000] + "...(truncated)"
+	}
+	log.Info("raw analysis response from agent", "length", len(raw), "preview", truncated)
+
 	var resp analysisResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, fmt.Errorf("parse analysis response: %w", err)
 	}
+
+	log.Info("parsed analysis response", "success", resp.Success, "optionCount", len(resp.Options), "componentCount", len(resp.Components))
+
+	sanitizeRBACApiGroups(resp.Options)
 
 	return &AnalysisOutput{
 		Success:    resp.Success,
 		Options:    resp.Options,
 		Components: resp.Components,
 	}, nil
+}
+
+// sanitizeRBACApiGroups replaces empty-string apiGroups entries (Kubernetes core
+// API group) with "core" so they pass the CRD's MinLength=1 validation.
+func sanitizeRBACApiGroups(options []agenticv1alpha1.RemediationOption) {
+	for i := range options {
+		for j := range options[i].RBAC.NamespaceScoped {
+			for k := range options[i].RBAC.NamespaceScoped[j].APIGroups {
+				if options[i].RBAC.NamespaceScoped[j].APIGroups[k] == "" {
+					options[i].RBAC.NamespaceScoped[j].APIGroups[k] = "core"
+				}
+			}
+		}
+		for j := range options[i].RBAC.ClusterScoped {
+			for k := range options[i].RBAC.ClusterScoped[j].APIGroups {
+				if options[i].RBAC.ClusterScoped[j].APIGroups[k] == "" {
+					options[i].RBAC.ClusterScoped[j].APIGroups[k] = "core"
+				}
+			}
+		}
+	}
 }
 
 func (s *SandboxAgentCaller) Execute(ctx context.Context, proposal *agenticv1alpha1.Proposal, step resolvedStep, option *agenticv1alpha1.RemediationOption) (*ExecutionOutput, error) {
@@ -186,6 +218,9 @@ func (s *SandboxAgentCaller) callWithSandbox(
 	s.patchSandboxInfo(ctx, proposal, stepName, claimName)
 
 	timeout := s.Timeout
+	if proposal.Spec.TimeoutMinutes != nil && *proposal.Spec.TimeoutMinutes > 0 {
+		timeout = time.Duration(*proposal.Spec.TimeoutMinutes) * time.Minute
+	}
 	if timeout == 0 {
 		timeout = defaultSandboxTimeout
 	}
@@ -207,7 +242,7 @@ func (s *SandboxAgentCaller) callWithSandbox(
 		}
 	}
 
-	client := s.ClientFactory(agentURL)
+	client := s.ClientFactory(agentURL, timeout)
 	resp, err := client.Run(ctx, "", query, schema, agentCtx)
 	if err != nil {
 		return nil, err

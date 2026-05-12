@@ -16,6 +16,7 @@ func NewProposalCmd(streams genericclioptions.IOStreams) *cobra.Command {
 	cmd.AddCommand(NewListCmd(streams))
 	cmd.AddCommand(NewGetCmd(streams))
 	cmd.AddCommand(NewCreateCmd(streams))
+	cmd.AddCommand(NewRCACmd(streams))
 	cmd.AddCommand(NewApproveCmd(streams))
 	cmd.AddCommand(NewDenyCmd(streams))
 	cmd.AddCommand(NewWatchCmd(streams))

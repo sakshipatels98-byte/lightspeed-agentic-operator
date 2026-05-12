@@ -1110,6 +1110,11 @@ func (in *ProposalSpec) DeepCopyInto(out *ProposalSpec) {
 		*out = new(ProposalStep)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.TimeoutMinutes != nil {
+		in, out := &in.TimeoutMinutes, &out.TimeoutMinutes
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Revision != nil {
 		in, out := &in.Revision, &out.Revision
 		*out = new(int32)
