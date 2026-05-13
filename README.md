@@ -3,12 +3,27 @@
 Kubernetes controller for the agentic proposal workflow (`agentic.openshift.io/v1alpha1`): Proposal, ProposalApproval, Agent, LLMProvider, ApprovalPolicy, and related resources.
 
 - **How to work (agents)**: [`agent.md`](agent.md)
-- **Modules, directories, proposal phases, in-repo code conventions**: [`CLAUDE.md`](CLAUDE.md)
+- **Two Go modules (`go.mod` / `go.sum` at root and under `api/`)**: below; **directory map, phases, conventions**: [`CLAUDE.md`](CLAUDE.md)
 - **Tests, manifests, Makefile, cluster workflow, `make api-lint`, CEL / `XValidation`**: this file
 
 ## Development
 
 Run the manager against a cluster using the usual controller-runtime kubeconfig rules (`KUBECONFIG`, default kubeconfig path, or in-cluster as a pod). Auth plugins (OIDC, GCP, Azure, …) are registered via `k8s.io/client-go/plugin/pkg/client/auth`.
+
+### Go modules (two `go.mod` trees)
+
+This repo has **two Go modules**:
+
+| Location | Module path | Role |
+|----------|-------------|------|
+| Repo root **`go.mod`** | `github.com/openshift/lightspeed-agentic-operator` | Controller, CLI, **`cmd/`**, **`controller/`**, etc. |
+| **`api/go.mod`** | `github.com/openshift/lightspeed-agentic-operator/api` | CRD types and API helpers only—downstreams can **`require`** this module without pulling the full operator graph. |
+
+The root module **`replace`s** `…/api` **`=> ./api`** for local builds. The **`Dockerfile`** copies **both** pairs of **`go.mod` / `go.sum`** before **`go mod download`**.
+
+**When changing Kubernetes / controller-runtime versions**, keep the two **`go.mod`** files in sync (same PR / same intent) and run **`go mod tidy`** at the root and under **`api/`** as needed.
+
+**`make test`** and **`make api-lint`** run tests and the kube API linter under **`api/`** with **`GOWORK=off`** so a repo-root **`go.work`** does not force the wrong module boundary.
 
 ### Agent Sandbox
 

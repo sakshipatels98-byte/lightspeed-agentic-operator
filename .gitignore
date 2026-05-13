@@ -1,0 +1,27 @@
+# Binaries and local tool installs (Makefile uses ./bin for controller-gen, kustomize, etc.)
+/bin/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+*.coverprofile
+vendor/
+
+# Env / secrets (local only)
+.env
+.env.*
+!.env.example
