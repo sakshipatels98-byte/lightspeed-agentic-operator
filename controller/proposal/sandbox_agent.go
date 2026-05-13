@@ -40,7 +40,6 @@ type SandboxAgentCaller struct {
 	ClientFactory    func(endpoint string, timeout time.Duration) AgentHTTPClientInterface
 	Namespace        string
 	BaseTemplateName string
-	Timeout          time.Duration
 }
 
 func NewSandboxAgentCaller(
@@ -55,8 +54,17 @@ func NewSandboxAgentCaller(
 		ClientFactory:    clientFactory,
 		Namespace:        namespace,
 		BaseTemplateName: baseTemplateName,
-		Timeout:          defaultSandboxTimeout,
 	}
+}
+
+// proposalTimeout returns the effective timeout for sandbox operations.
+// Reads spec.timeoutMinutes when set; falls back to defaultSandboxTimeout.
+// This is the single place where timeout policy is decided.
+func proposalTimeout(proposal *agenticv1alpha1.Proposal) time.Duration {
+	if proposal.Spec.TimeoutMinutes != nil && *proposal.Spec.TimeoutMinutes > 0 {
+		return time.Duration(*proposal.Spec.TimeoutMinutes) * time.Minute
+	}
+	return defaultSandboxTimeout
 }
 
 func stepString(step agenticv1alpha1.SandboxStep) string {
@@ -66,7 +74,7 @@ func stepString(step agenticv1alpha1.SandboxStep) string {
 func (s *SandboxAgentCaller) Analyze(ctx context.Context, proposal *agenticv1alpha1.Proposal, step resolvedStep, requestText string) (*AnalysisOutput, error) {
 	log := logf.FromContext(ctx)
 	query := buildAnalysisQuery(requestText, proposal)
-	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepAnalysis), step, query, buildAgentContext(proposal))
+	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepAnalysis), step, query, buildAgentContext(proposal), proposalTimeout(proposal))
 	if err != nil {
 		return nil, fmt.Errorf("analysis agent call: %w", err)
 	}
@@ -84,33 +92,10 @@ func (s *SandboxAgentCaller) Analyze(ctx context.Context, proposal *agenticv1alp
 
 	log.Info("parsed analysis response", "success", resp.Success, "optionCount", len(resp.Options))
 
-	sanitizeRBACApiGroups(resp.Options)
-
 	return &AnalysisOutput{
 		Success: resp.Success,
 		Options: resp.Options,
 	}, nil
-}
-
-// sanitizeRBACApiGroups replaces empty-string apiGroups entries (Kubernetes core
-// API group) with "core" so they pass the CRD's MinLength=1 validation.
-func sanitizeRBACApiGroups(options []agenticv1alpha1.RemediationOption) {
-	for i := range options {
-		for j := range options[i].RBAC.NamespaceScoped {
-			for k := range options[i].RBAC.NamespaceScoped[j].APIGroups {
-				if options[i].RBAC.NamespaceScoped[j].APIGroups[k] == "" {
-					options[i].RBAC.NamespaceScoped[j].APIGroups[k] = "core"
-				}
-			}
-		}
-		for j := range options[i].RBAC.ClusterScoped {
-			for k := range options[i].RBAC.ClusterScoped[j].APIGroups {
-				if options[i].RBAC.ClusterScoped[j].APIGroups[k] == "" {
-					options[i].RBAC.ClusterScoped[j].APIGroups[k] = "core"
-				}
-			}
-		}
-	}
 }
 
 func (s *SandboxAgentCaller) Execute(ctx context.Context, proposal *agenticv1alpha1.Proposal, step resolvedStep, option *agenticv1alpha1.RemediationOption) (*ExecutionOutput, error) {
@@ -120,7 +105,7 @@ func (s *SandboxAgentCaller) Execute(ctx context.Context, proposal *agenticv1alp
 	}
 
 	query := buildExecutionQuery(option)
-	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepExecution), step, query, agentCtx)
+	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepExecution), step, query, agentCtx, proposalTimeout(proposal))
 	if err != nil {
 		return nil, fmt.Errorf("execution agent call: %w", err)
 	}
@@ -148,7 +133,7 @@ func (s *SandboxAgentCaller) Verify(ctx context.Context, proposal *agenticv1alph
 	agentCtx.ExecutionResult = executionOutputToAgentResult(exec)
 
 	query := buildVerificationQuery(option, exec)
-	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepVerification), step, query, agentCtx)
+	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepVerification), step, query, agentCtx, proposalTimeout(proposal))
 	if err != nil {
 		return nil, fmt.Errorf("verification agent call: %w", err)
 	}
@@ -167,7 +152,7 @@ func (s *SandboxAgentCaller) Verify(ctx context.Context, proposal *agenticv1alph
 
 func (s *SandboxAgentCaller) Escalate(ctx context.Context, proposal *agenticv1alpha1.Proposal, step resolvedStep, requestText string) (*EscalationOutput, error) {
 	agentCtx := buildAgentContext(proposal)
-	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepEscalation), step, requestText, agentCtx)
+	raw, err := s.callWithSandbox(ctx, proposal, stepString(agenticv1alpha1.SandboxStepEscalation), step, requestText, agentCtx, proposalTimeout(proposal))
 	if err != nil {
 		return nil, fmt.Errorf("escalation agent call: %w", err)
 	}
@@ -195,6 +180,7 @@ func (s *SandboxAgentCaller) callWithSandbox(
 	step resolvedStep,
 	query string,
 	agentCtx *agentContext,
+	timeout time.Duration,
 ) (json.RawMessage, error) {
 	templateName, err := EnsureAgentTemplate(ctx, s.K8sClient, s.BaseTemplateName, s.Namespace, stepName, step.Agent, step.LLM, step.Tools)
 	if err != nil {
@@ -209,14 +195,6 @@ func (s *SandboxAgentCaller) callWithSandbox(
 	// Write sandbox info immediately so the console can stream logs
 	// while the sandbox is still starting up
 	s.patchSandboxInfo(ctx, proposal, stepName, claimName)
-
-	timeout := s.Timeout
-	if proposal.Spec.TimeoutMinutes != nil && *proposal.Spec.TimeoutMinutes > 0 {
-		timeout = time.Duration(*proposal.Spec.TimeoutMinutes) * time.Minute
-	}
-	if timeout == 0 {
-		timeout = defaultSandboxTimeout
-	}
 
 	endpoint, err := s.Sandbox.WaitReady(ctx, claimName, timeout)
 	if err != nil {

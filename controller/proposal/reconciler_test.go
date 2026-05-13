@@ -255,7 +255,6 @@ func newMockSandboxAgent(analysisJSON, executionJSON, verificationJSON string) (
 		},
 		Namespace:        "test-ns",
 		BaseTemplateName: "test-template",
-		Timeout:          5 * time.Minute,
 	}
 	return caller, sandbox
 }

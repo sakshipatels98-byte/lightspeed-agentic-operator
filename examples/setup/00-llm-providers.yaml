@@ -19,5 +19,5 @@ spec:
     credentialsSecret:
       name: llm-credentials
       namespace: openshift-lightspeed
-    project: itpc-gcp-hcm-pe-eng-claude
+    projectID: itpc-gcp-hcm-pe-eng-claude
     region: us-central1
