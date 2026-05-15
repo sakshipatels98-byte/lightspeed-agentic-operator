@@ -30,7 +30,7 @@ func TestSelectedOption_ReturnsFirstOption(t *testing.T) {
 	}
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Namespace: "default"}
 
 	got, err := r.selectedOption(context.Background(), proposal)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestSelectedOption_NoResults(t *testing.T) {
 	proposal.Namespace = "default"
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Namespace: "default"}
 
 	got, err := r.selectedOption(context.Background(), proposal)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestTrimNonSelectedOptions_SingleOptionNoop(t *testing.T) {
 	}
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).WithStatusSubresource(analysisResult).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Namespace: "default"}
 
 	got, err := r.trimNonSelectedOptions(context.Background(), proposal, approval, nil)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestTrimThenSelectedOption_EndToEnd(t *testing.T) {
 			}
 
 			fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).WithStatusSubresource(analysisResult).Build()
-			r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+			r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Namespace: "default"}
 
 			got, err := r.trimNonSelectedOptions(context.Background(), proposal, approval, nil)
 			if err != nil {
@@ -224,7 +224,7 @@ func TestTrimNonSelectedOptions_OutOfRange(t *testing.T) {
 	}
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(analysisResult).WithStatusSubresource(analysisResult).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard()}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Namespace: "default"}
 
 	_, err := r.trimNonSelectedOptions(context.Background(), proposal, approval, nil)
 	if err == nil {
