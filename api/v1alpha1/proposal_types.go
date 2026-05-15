@@ -356,6 +356,18 @@ type ProposalSpec struct {
 	// +optional
 	Verification ProposalStep `json:"verification,omitzero"`
 
+	// timeoutMinutes sets the per-step timeout for sandbox agent calls.
+	// This controls how long the operator waits for the sandbox pod to
+	// become ready and for the agent to complete its work. Increase this
+	// for long-running tools (e.g., IntelliAide RCA takes 10-30 minutes).
+	// Defaults to 5 minutes when omitted.
+	//
+	// Mutable: can be adjusted before approving a step.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=60
+	TimeoutMinutes *int32 `json:"timeoutMinutes,omitempty"`
+
 	// revisionFeedback is the user's free-text feedback requesting changes
 	// to the analysis. Patching this field bumps metadata.generation, which
 	// the operator detects (generation > observedGeneration) and triggers

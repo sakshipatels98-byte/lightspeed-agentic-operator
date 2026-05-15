@@ -21,13 +21,13 @@ type analysisResponse struct {
 }
 
 type executionResponse struct {
-	Success      bool                                   `json:"success"`
+	Success      bool                                  `json:"success"`
 	ActionsTaken []agenticv1alpha1.ExecutionAction      `json:"actionsTaken"`
 	Verification *agenticv1alpha1.ExecutionVerification `json:"verification,omitempty"`
 }
 
 type verificationResponse struct {
-	Success bool                          `json:"success"`
+	Success bool                         `json:"success"`
 	Checks  []agenticv1alpha1.VerifyCheck `json:"checks"`
 	Summary string                        `json:"summary"`
 }
@@ -37,7 +37,7 @@ type verificationResponse struct {
 type SandboxAgentCaller struct {
 	Sandbox          SandboxProvider
 	K8sClient        client.Client
-	ClientFactory    func(endpoint string) AgentHTTPClientInterface
+	ClientFactory    func(endpoint string, timeout time.Duration) AgentHTTPClientInterface
 	Namespace        string
 	BaseTemplateName string
 	Timeout          time.Duration
@@ -46,7 +46,7 @@ type SandboxAgentCaller struct {
 func NewSandboxAgentCaller(
 	sandbox SandboxProvider,
 	k8sClient client.Client,
-	clientFactory func(endpoint string) AgentHTTPClientInterface,
+	clientFactory func(endpoint string, timeout time.Duration) AgentHTTPClientInterface,
 	namespace, baseTemplateName string,
 ) *SandboxAgentCaller {
 	return &SandboxAgentCaller{
@@ -59,6 +59,15 @@ func NewSandboxAgentCaller(
 	}
 }
 
+// proposalTimeout returns the effective timeout for sandbox operations.
+// Reads spec.timeoutMinutes when set; falls back to defaultSandboxTimeout.
+// This is the single place where timeout policy is decided.
+func proposalTimeout(proposal *agenticv1alpha1.Proposal) time.Duration {
+	if proposal.Spec.TimeoutMinutes != nil && *proposal.Spec.TimeoutMinutes > 0 {
+		return time.Duration(*proposal.Spec.TimeoutMinutes) * time.Minute
+	}
+	return defaultSandboxTimeout
+}
 func stepString(step agenticv1alpha1.SandboxStep) string {
 	return strings.ToLower(string(step))
 }
@@ -178,10 +187,7 @@ func (s *SandboxAgentCaller) callWithSandbox(
 	// while the sandbox is still starting up
 	s.patchSandboxInfo(ctx, proposal, stepName, claimName)
 
-	timeout := s.Timeout
-	if timeout == 0 {
-		timeout = defaultSandboxTimeout
-	}
+	timeout := proposalTimeout(proposal)
 
 	endpoint, err := s.Sandbox.WaitReady(ctx, claimName, timeout)
 	if err != nil {
@@ -195,7 +201,7 @@ func (s *SandboxAgentCaller) callWithSandbox(
 
 	schema := outputSchemaForStep(stepName, proposal)
 
-	client := s.ClientFactory(agentURL)
+	client := s.ClientFactory(agentURL, timeout)
 	resp, err := client.Run(ctx, "", query, schema, agentCtx)
 	if err != nil {
 		return nil, err

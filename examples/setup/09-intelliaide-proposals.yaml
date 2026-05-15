@@ -1,0 +1,349 @@
+# IntelliAide RCA Proposals
+#
+# IntelliAide is a must-gather / live-cluster RCA service that runs a 3-pass
+# analysis (High → Medium → Low priority) using Claude as the orchestrator.
+#
+# Integration model:
+#   User triggers a Proposal CR  →  operator launches analysis sandbox
+#   →  Claude reads /skills/intelliaide/CLAUDE.md  →  Claude calls skill scripts
+#   →  scripts call IntelliAide MCP server (mcp_server.py) over in-cluster HTTP
+#   →  IntelliAide extracts live cluster data and runs RCA
+#   →  Claude maps results into AnalysisResult CR
+#
+# Workflow shape: analysis ONLY (advisory).
+#   IntelliAide returns diagnosis and recommendations. There is no automated
+#   execution or verification step — humans decide on follow-up actions.
+#
+# Skills image tools (in /skills/intelliaide/):
+#   run_rca.py          -- start 3-pass live-cluster RCA, prints job_id
+#   get_rca_status.py   -- poll job progress (state, phase, progress 0-100)
+#   get_rca_result.py   -- fetch full structured RCA report when completed
+#   cancel_rca.py       -- abort a running or queued RCA job
+#
+# outputSchema extends the standard analysis schema with an rcaSummary block
+# that maps 1:1 to IntelliAide's rca_structured output fields:
+#   executiveSummary, chronologyOfEvents, primaryRootCauses, secondaryCauses,
+#   aggregatedErrorPatterns, recommendations, evidenceFiles, totalCostUsd
+#
+# Pre-requisites (cluster admin, one-time):
+#   1. Build and push skills image:
+#        podman build -f Dockerfile.skills \
+#          -t quay.io/<org>/intelliaide-skills:latest .
+#        podman push quay.io/<org>/intelliaide-skills:latest
+#   2. Deploy IntelliAide:
+#        oc apply -k deploy/openshift
+#   3. Label openshift-lightspeed namespace (Kubernetes 1.21+ does this
+#      automatically via kubernetes.io/metadata.name):
+#        oc label namespace openshift-lightspeed \
+#          kubernetes.io/metadata.name=openshift-lightspeed --overwrite
+#
+# Trigger:
+#   kubectl apply -f 09-intelliaide-proposals.yaml
+#   oc agentic proposal approve intelliaide-rca-etcd \
+#     -n intelliaide-mcp-server --stage=analysis
+
+---
+# etcd RCA — etcd member health / leader election failures
+apiVersion: agentic.openshift.io/v1alpha1
+kind: Proposal
+metadata:
+  name: intelliaide-rca-etcd
+  namespace: intelliaide-mcp-server
+  labels:
+    agentic.openshift.io/source: intelliaide
+    agentic.openshift.io/component: etcd
+spec:
+  request: |
+    Perform root cause analysis for the following issue:
+    One or more etcd pods are not ready, or etcd endpoint health is degraded
+    in namespace openshift-etcd.
+
+  targetNamespaces:
+    - openshift-etcd
+
+  # IntelliAide RCA takes 10-30 minutes; override the default 5-min timeout.
+  timeoutMinutes: 30
+
+  tools:
+    skills:
+      - image: quay.io/rh-ee-cdate/intelliaide-skills:latest
+    outputSchema:
+      type: object
+      required:
+        - options
+        - rcaSummary
+      properties:
+        options:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - title
+              - diagnosis
+              - proposal
+            properties:
+              title:
+                type: string
+              summary:
+                type: string
+              diagnosis:
+                type: object
+                required:
+                  - summary
+                  - confidence
+                  - rootCause
+                properties:
+                  summary:
+                    type: string
+                    description: >
+                      Maps to rca_structured.executive_summary +
+                      rca_structured.chronology_of_events
+                  confidence:
+                    type: string
+                    enum: [Low, Medium, High]
+                  rootCause:
+                    type: string
+                    description: >
+                      One root cause from rca_structured.primary_root_causes
+              proposal:
+                type: object
+                required:
+                  - description
+                  - actions
+                  - risk
+                  - reversible
+                properties:
+                  description:
+                    type: string
+                    description: >
+                      Corresponding entry from rca_structured.recommendations
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, description]
+                      properties:
+                        type:
+                          type: string
+                        description:
+                          type: string
+                  risk:
+                    type: string
+                    enum: [Low, Medium, High, Critical]
+                  reversible:
+                    type: string
+                    enum: [Reversible, Irreversible, Partial]
+              verification:
+                type: object
+                properties:
+                  description:
+                    type: string
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        command: {type: string}
+                        expected: {type: string}
+                        type: {type: string}
+              rbac:
+                type: object
+        rcaSummary:
+          type: object
+          description: >
+            Verbatim structured output from IntelliAide's rca_structured field.
+            Each property maps directly to an rca_structured key.
+          required:
+            - executiveSummary
+            - primaryRootCauses
+            - recommendations
+          properties:
+            executiveSummary:
+              type: string
+              description: rca_structured.executive_summary
+            chronologyOfEvents:
+              type: string
+              description: rca_structured.chronology_of_events
+            primaryRootCauses:
+              type: string
+              description: rca_structured.primary_root_causes (Markdown)
+            secondaryCauses:
+              type: string
+              description: rca_structured.secondary_causes
+            aggregatedErrorPatterns:
+              type: string
+              description: rca_structured.aggregated_error_patterns
+            recommendations:
+              type: string
+              description: rca_structured.recommendations (Markdown)
+            evidenceFiles:
+              type: array
+              items:
+                type: string
+              description: List of cluster files analysed as evidence
+            totalCostUsd:
+              type: number
+              description: Total LLM cost in USD for this RCA run
+
+  analysis:
+    agent: smart
+
+---
+# Cluster update failure RCA
+apiVersion: agentic.openshift.io/v1alpha1
+kind: Proposal
+metadata:
+  name: intelliaide-rca-update-failure
+  namespace: intelliaide-mcp-server
+  labels:
+    agentic.openshift.io/source: intelliaide
+    agentic.openshift.io/component: cluster-version-operator
+spec:
+  request: |
+    Perform root cause analysis for the following issue:
+    OpenShift cluster update has stalled or failed. ClusterVersion reports
+    Progressing=True with no forward progress, or Degraded=True.
+
+  targetNamespaces:
+    - openshift-cluster-version
+    - openshift-machine-config-operator
+
+  timeoutMinutes: 30
+
+  tools:
+    skills:
+      - image: quay.io/rh-ee-cdate/intelliaide-skills:latest
+    outputSchema:
+      type: object
+      required: [options, rcaSummary]
+      properties:
+        options:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [title, diagnosis, proposal]
+            properties:
+              title: {type: string}
+              summary: {type: string}
+              diagnosis:
+                type: object
+                required: [summary, confidence, rootCause]
+                properties:
+                  summary: {type: string}
+                  confidence: {type: string, enum: [Low, Medium, High]}
+                  rootCause: {type: string}
+              proposal:
+                type: object
+                required: [description, actions, risk, reversible]
+                properties:
+                  description: {type: string}
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, description]
+                      properties:
+                        type: {type: string}
+                        description: {type: string}
+                  risk: {type: string, enum: [Low, Medium, High, Critical]}
+                  reversible: {type: string, enum: [Reversible, Irreversible, Partial]}
+              verification: {type: object}
+              rbac: {type: object}
+        rcaSummary:
+          type: object
+          required: [executiveSummary, primaryRootCauses, recommendations]
+          properties:
+            executiveSummary: {type: string}
+            chronologyOfEvents: {type: string}
+            primaryRootCauses: {type: string}
+            secondaryCauses: {type: string}
+            aggregatedErrorPatterns: {type: string}
+            recommendations: {type: string}
+            evidenceFiles:
+              type: array
+              items: {type: string}
+            totalCostUsd: {type: number}
+
+  analysis:
+    agent: smart
+
+---
+# General RCA — use for any issue without a dedicated template
+apiVersion: agentic.openshift.io/v1alpha1
+kind: Proposal
+metadata:
+  name: intelliaide-rca-general
+  namespace: intelliaide-mcp-server
+  labels:
+    agentic.openshift.io/source: intelliaide
+spec:
+  request: |
+    Perform root cause analysis for the following issue:
+    Test cases failing during OpenShift update.
+
+  targetNamespaces:
+    - openshift-etcd
+    - openshift-cluster-version
+
+  timeoutMinutes: 30
+
+  tools:
+    skills:
+      - image: quay.io/rh-ee-cdate/intelliaide-skills:latest
+    outputSchema:
+      type: object
+      required: [options, rcaSummary]
+      properties:
+        options:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [title, diagnosis, proposal]
+            properties:
+              title: {type: string}
+              summary: {type: string}
+              diagnosis:
+                type: object
+                required: [summary, confidence, rootCause]
+                properties:
+                  summary: {type: string}
+                  confidence: {type: string, enum: [Low, Medium, High]}
+                  rootCause: {type: string}
+              proposal:
+                type: object
+                required: [description, actions, risk, reversible]
+                properties:
+                  description: {type: string}
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, description]
+                      properties:
+                        type: {type: string}
+                        description: {type: string}
+                  risk: {type: string, enum: [Low, Medium, High, Critical]}
+                  reversible: {type: string, enum: [Reversible, Irreversible, Partial]}
+              verification: {type: object}
+              rbac: {type: object}
+        rcaSummary:
+          type: object
+          required: [executiveSummary, primaryRootCauses, recommendations]
+          properties:
+            executiveSummary: {type: string}
+            chronologyOfEvents: {type: string}
+            primaryRootCauses: {type: string}
+            secondaryCauses: {type: string}
+            aggregatedErrorPatterns: {type: string}
+            recommendations: {type: string}
+            evidenceFiles:
+              type: array
+              items: {type: string}
+            totalCostUsd: {type: number}
+
+  analysis:
+    agent: smart

@@ -60,7 +60,7 @@ func newTestSandboxAgentCaller(sandbox *mockSandboxProvider, httpClient *mockHTT
 	return &SandboxAgentCaller{
 		Sandbox:          sandbox,
 		K8sClient:        fc,
-		ClientFactory:    func(_ string) AgentHTTPClientInterface { return httpClient },
+		ClientFactory:    func(_ string, _ time.Duration) AgentHTTPClientInterface { return httpClient },
 		Namespace:        "test-ns",
 		BaseTemplateName: "test-template",
 		Timeout:          5 * time.Minute,
@@ -76,7 +76,7 @@ func newTestSandboxAgentCallerWithProposal(sandbox *mockSandboxProvider, httpCli
 	return &SandboxAgentCaller{
 		Sandbox:          sandbox,
 		K8sClient:        fc,
-		ClientFactory:    func(_ string) AgentHTTPClientInterface { return httpClient },
+		ClientFactory:    func(_ string, _ time.Duration) AgentHTTPClientInterface { return httpClient },
 		Namespace:        "test-ns",
 		BaseTemplateName: "test-template",
 		Timeout:          5 * time.Minute,

@@ -50,7 +50,7 @@ func (m *SandboxManager) buildClaim(claimName, proposalName, step, templateName 
 				"namespace": m.Namespace,
 				"labels": map[string]any{
 					LabelProposal: proposalName,
-					LabelStep:     step,
+				LabelStep:     step,
 				},
 			},
 			"spec": map[string]any{
