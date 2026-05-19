@@ -80,9 +80,10 @@ func main() {
 	)
 
 	reconciler := &proposal.ProposalReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("Proposal"),
-		Agent:  agentCaller,
+		Client:    mgr.GetClient(),
+		Log:       ctrl.Log.WithName("controllers").WithName("Proposal"),
+		Agent:     agentCaller,
+		Namespace: namespace,
 	}
 
 	if err := reconciler.SetupWithManager(mgr); err != nil {

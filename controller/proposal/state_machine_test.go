@@ -54,7 +54,7 @@ func newReconcilerWithPolicy(t *testing.T, proposal *agenticv1alpha1.Proposal, a
 	objs = append(objs, extraObjs...)
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).
 		WithStatusSubresource(proposal, &agenticv1alpha1.AnalysisResult{}, &agenticv1alpha1.ExecutionResult{}, &agenticv1alpha1.VerificationResult{}, &agenticv1alpha1.EscalationResult{}).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: agent}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: agent, Namespace: "default"}
 	// Initial reconcile creates ProposalApproval (auto-approved stages based on policy).
 	reconcileOnce(r, proposal.Name)
 	return r, fc
@@ -507,7 +507,7 @@ func TestNoPolicy_DefaultsToManual(t *testing.T) {
 	objs := []client.Object{proposal, testDefaultAgent(), testLLM("smart")}
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).
 		WithStatusSubresource(proposal, &agenticv1alpha1.AnalysisResult{}, &agenticv1alpha1.ExecutionResult{}, &agenticv1alpha1.VerificationResult{}, &agenticv1alpha1.EscalationResult{}).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: agent}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: agent, Namespace: "default"}
 
 	// Initial reconcile creates ProposalApproval; analysis should wait for approval
 	reconcileOnce(r, "fix-crash")

@@ -279,7 +279,7 @@ func TestReconcile_StatusInitialization(t *testing.T) {
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).
 		WithStatusSubresource(proposal, &agenticv1alpha1.AnalysisResult{}, &agenticv1alpha1.ExecutionResult{}, &agenticv1alpha1.VerificationResult{}, &agenticv1alpha1.EscalationResult{}).Build()
 
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: newTestAgentCaller()}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: newTestAgentCaller(), Namespace: "default"}
 
 	_, err := reconcileOnce(r, "fresh")
 	if err != nil {
@@ -305,7 +305,7 @@ func TestReconcile_Denied_Terminal(t *testing.T) {
 	}
 
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithObjects(proposal).WithStatusSubresource(proposal, &agenticv1alpha1.AnalysisResult{}, &agenticv1alpha1.ExecutionResult{}, &agenticv1alpha1.VerificationResult{}, &agenticv1alpha1.EscalationResult{}).Build()
-	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: newTestAgentCaller()}
+	r := &ProposalReconciler{Client: fc, Log: logr.Discard(), Agent: newTestAgentCaller(), Namespace: "default"}
 
 	result, err := reconcileOnce(r, "fix-crash")
 	if err != nil {
