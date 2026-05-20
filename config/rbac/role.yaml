@@ -42,8 +42,12 @@ rules:
 - apiGroups:
   - agentic.openshift.io
   resources:
+  - analysisresults/status
+  - escalationresults/status
+  - executionresults/status
   - proposalapprovals/status
   - proposals/status
+  - verificationresults/status
   verbs:
   - get
   - patch
